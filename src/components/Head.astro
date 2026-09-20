@@ -1,0 +1,14 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description } = Astro.props;
+const fallbackDescription =
+  "xcl is a superset of HCL for Go: define your configuration as Go structs, and get references, variables, modules, functions, plugins and state on top of the language you already know.";
+---
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{title}</title>
+<meta name="description" content={description ?? fallbackDescription} />

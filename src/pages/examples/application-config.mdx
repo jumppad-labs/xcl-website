@@ -1,0 +1,435 @@
+---
+layout: ../../layouts/Shell.astro
+title: "Application config example - xcl"
+description: "One file, deeply nested: the kind of application configuration usually written as JSON, parsed into Go types with objects, arrays of objects and free form maps."
+---
+import Hero from "../../components/sections/Hero.astro";
+import Prose from "../../components/sections/Prose.astro";
+import CtaBanner from "../../components/sections/CtaBanner.astro";
+import Button from "../../components/Button.astro";
+
+<Hero
+  heading="Example: an application config file"
+  sub="One file, deeply nested. The kind of configuration usually written as JSON, with objects inside objects, arrays of objects and free form maps."
+/>
+
+<Prose>
+
+Most applications carry one configuration file: a server section, a database
+section, telemetry, a list of upstream services. It is usually JSON, and it
+is usually read into a tree of Go structs.
+
+This example is that file, written as xcl. One `application` block holds
+everything, nested up to four blocks deep, and it parses into one Go type
+whose fields hold plain structs, slices and maps. Nothing here is created in
+the outside world, so there is no plugin and no provider.
+
+The source is in
+[`example/appconfig`](https://github.com/jumppad-labs/xcl/tree/main/example/appconfig).
+
+## Every JSON shape has an equivalent
+
+| In JSON | In xcl | In Go |
+|---|---|---|
+| an object | a nested block, `server { }` | a pointer to a struct |
+| an array of objects | a repeated block, `service { }` written twice | a slice of structs |
+| an array of values | a list attribute, `owners = [...]` | a slice |
+| an object with unknown keys | a map attribute, `labels = { }` | a `map[string]string` |
+
+Only the top level type is a resource, so only it embeds
+`types.ResourceBase`. Everything below it is a plain Go struct, reached
+through the field that holds it, exactly as it would be reached through a
+JSON document.
+
+```go title="example/appconfig/resources/resources.go"
+// Application defines the block type `application`, the root of the
+// configuration. Everything else in the file hangs off it.
+type Application struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Name        string `xcl:"name" json:"name"`
+	Environment string `xcl:"environment" json:"environment"`
+
+	// Owners is a list of values, an optional attribute is left empty when
+	// the configuration does not set it
+	Owners []string `xcl:"owners,optional" json:"owners,omitempty"`
+
+	// Labels is a map, for keys the Go type does not know ahead of time
+	Labels map[string]string `xcl:"labels,optional" json:"labels,omitempty"`
+
+	// Server and Database appear once, so they are pointers. A pointer block
+	// left out of the configuration is nil rather than an empty struct.
+	Server   *Server   `xcl:"server,block" json:"server"`
+	Database *Database `xcl:"database,block" json:"database"`
+
+	// Telemetry is optional, this configuration sets it
+	Telemetry *Telemetry `xcl:"telemetry,block" json:"telemetry,omitempty"`
+
+	// Services is a repeated block, one entry per service block in the file,
+	// in the order they are written
+	Services []Service `xcl:"service,block" json:"service,omitempty"`
+}
+```
+
+Nesting keeps going as deep as the configuration needs. `application`,
+`server`, `tls`, `client_auth` is four blocks deep, and `application`,
+`service`, `route`, `rate_limit` is a second path just as deep.
+
+```go title="example/appconfig/resources/resources.go"
+// TLS is the nested `tls` block of a server, and nests a block of its own in
+// turn: application, server, tls, client_auth is four blocks deep. Blocks can
+// be nested as deeply as the configuration needs.
+type TLS struct {
+	Enabled  bool   `xcl:"enabled" json:"enabled"`
+	CertFile string `xcl:"cert_file" json:"cert_file"`
+	KeyFile  string `xcl:"key_file" json:"key_file"`
+
+	Ciphers []string `xcl:"ciphers,optional" json:"ciphers,omitempty"`
+
+	ClientAuth *ClientAuth `xcl:"client_auth,block" json:"client_auth,omitempty"`
+}
+
+// Service is a repeated `service` block of an application, an upstream the
+// application calls. It repeats, and holds repeated blocks of its own.
+type Service struct {
+	Name string `xcl:"name" json:"name"`
+	URL  string `xcl:"url" json:"url"`
+
+	// Headers is sent with every request to this service
+	Headers map[string]string `xcl:"headers,optional" json:"headers,omitempty"`
+
+	Retry *Retry `xcl:"retry,block" json:"retry,omitempty"`
+
+	// Routes repeat inside a block that repeats itself
+	Routes []Route `xcl:"route,block" json:"route,omitempty"`
+}
+```
+
+## The file
+
+One file, one resource. Variables sit at the top, and `env()` keeps the
+database password out of the file entirely: functions are evaluated while the
+configuration is parsed.
+
+```hcl title="example/appconfig/config/app.xcl"
+variable "environment" {
+  default = "production"
+}
+
+variable "db_host" {
+  default = "postgres.internal"
+}
+
+resource "application" "api" {
+  name        = "checkout-api"
+  environment = variable.environment
+
+  # A list of values, and a map for keys the Go type does not name
+  owners = ["platform-team", "payments-team"]
+
+  labels = {
+    tier      = "edge"
+    component = "api"
+  }
+
+  # server appears once, so it is a pointer in Go
+  server {
+    host = "0.0.0.0"
+    port = 8443
+
+    # tls is nested inside server, and nests client_auth inside itself
+    tls {
+      enabled   = true
+      cert_file = "/etc/certs/api.pem"
+      key_file  = "/etc/certs/api-key.pem"
+
+      ciphers = [
+        "TLS_AES_128_GCM_SHA256",
+        "TLS_AES_256_GCM_SHA384",
+      ]
+
+      client_auth {
+        mode    = "require_and_verify"
+        ca_file = "/etc/certs/ca.pem"
+      }
+    }
+
+    timeouts {
+      read  = 15
+      write = 15
+      idle  = 60
+    }
+  }
+
+  database {
+    driver   = "postgres"
+    host     = variable.db_host
+    port     = 5432
+    name     = "checkout"
+    username = "checkout"
+
+    # Functions are evaluated while the configuration is parsed, so a secret
+    # stays out of the file
+    password = env("DB_PASSWORD")
+
+    pool {
+      max_open     = 25
+      max_idle     = 5
+      max_lifetime = 300
+    }
+
+    # replica is a repeated block, written once per replica
+    replica {
+      host   = "postgres-replica-1.internal"
+      port   = 5432
+      weight = 70
+    }
+
+    replica {
+      host   = "postgres-replica-2.internal"
+      port   = 5432
+      weight = 30
+    }
+
+    options = {
+      sslmode          = "verify-full"
+      application_name = "checkout-api"
+    }
+  }
+
+  telemetry {
+    logging {
+      level  = "info"
+      format = "json"
+    }
+
+    metrics {
+      enabled = true
+      path    = "/metrics"
+    }
+
+    tracing {
+      enabled     = true
+      endpoint    = "otel-collector.internal:4317"
+      sample_rate = 0.1
+    }
+  }
+
+  # service repeats, and each one holds repeated route blocks of its own
+  service {
+    name = "payments"
+    url  = "https://payments.internal"
+
+    headers = {
+      "x-service" = "checkout-api"
+    }
+
+    retry {
+      attempts = 3
+      backoff  = 250
+    }
+
+    route {
+      path    = "/v1/charges"
+      methods = ["POST"]
+
+      rate_limit {
+        requests_per_second = 50
+        burst               = 100
+      }
+    }
+
+    route {
+      path    = "/v1/refunds"
+      methods = ["POST", "DELETE"]
+
+      rate_limit {
+        requests_per_second = 10
+      }
+    }
+  }
+
+  service {
+    name = "inventory"
+    url  = "https://inventory.internal"
+
+    retry {
+      attempts = 2
+    }
+
+    route {
+      path    = "/v1/stock"
+      methods = ["GET"]
+    }
+  }
+}
+
+output "listen_address" {
+  value = "${resource.application.api.server.host}:${resource.application.api.server.port}"
+}
+```
+
+## The program
+
+One block type, one Go type, one query. Everything nested inside is reached
+through the fields of that type.
+
+```go title="example/appconfig/main.go"
+r := registry.NewPluginRegistry(log)
+
+// One block type, one Go type. Everything nested inside it is reached
+// through the fields of that type.
+if err := r.RegisterType("application", &resources.Application{}); err != nil {
+	return nil, err
+}
+
+store, err := state.NewFileStateStore(statePath, r)
+if err != nil {
+	return nil, err
+}
+
+c := xcl.NewConfig(
+	xcl.WithPluginRegistry(r),
+	xcl.WithStateStore(store),
+	xcl.WithEventHandler(eventlog.Handler(log)),
+)
+
+if err := c.Apply(dir); err != nil {
+	return nil, err
+}
+
+// A registered type comes back as the Go type it was registered as, so
+// the whole tree below it is ordinary Go structs, slices and maps
+app, err := xcl.NewQuerier[resources.Application](c).FindResource("resource.application.api")
+if err != nil {
+	return nil, err
+}
+```
+
+From there it is ordinary Go. A block that appears once is a pointer, so
+check it for nil; a block that repeats is a slice you range over:
+
+```go title="example/appconfig/main.go"
+if app.Server.TLS != nil {
+	// Four blocks deep: application, server, tls, client_auth
+	if app.Server.TLS.ClientAuth != nil {
+		fmt.Fprintf(out, "      client_auth mode=%s ca_file=%s\n", app.Server.TLS.ClientAuth.Mode, app.Server.TLS.ClientAuth.CAFile)
+	}
+}
+
+for _, service := range app.Services {
+	for _, route := range service.Routes {
+		if route.RateLimit != nil {
+			fmt.Fprintf(out, "      rate_limit requests_per_second=%d burst=%d\n", route.RateLimit.RequestsPerSecond, route.RateLimit.Burst)
+		}
+	}
+}
+```
+
+## Run it
+
+From the `example/appconfig` directory:
+
+```bash
+make run
+```
+
+It prints the configuration as a tree, so the shape is visible:
+
+```text
+## Application
+  resource.application.api name=checkout-api environment=production
+    owners=platform-team,payments-team tier=edge
+  server host=0.0.0.0 port=8443
+    tls enabled=true ciphers=2
+      client_auth mode=require_and_verify ca_file=/etc/certs/ca.pem
+    timeouts read=15 write=15 idle=60
+  database driver=postgres host=postgres.internal name=checkout
+    pool max_open=25 max_idle=5
+    replica host=postgres-replica-1.internal weight=70
+    replica host=postgres-replica-2.internal weight=30
+    options sslmode=verify-full
+  telemetry logging level=info format=json
+  telemetry tracing endpoint=otel-collector.internal:4317 sample_rate=0.1
+  service payments url=https://payments.internal
+    retry attempts=3 backoff=250
+    route /v1/charges methods=POST
+      rate_limit requests_per_second=50 burst=100
+    route /v1/refunds methods=POST,DELETE
+      rate_limit requests_per_second=10 burst=0
+  service inventory url=https://inventory.internal
+    retry attempts=2 backoff=0
+    route /v1/stock methods=GET
+```
+
+Then it prints the same resource as JSON, which is the document this
+configuration replaces. The `json` tags name every field, and it is also how
+the resource is saved to state:
+
+```json title="the printed JSON, abridged"
+{
+  "name": "checkout-api",
+  "environment": "production",
+  "owners": [
+    "platform-team",
+    "payments-team"
+  ],
+  "labels": {
+    "component": "api",
+    "tier": "edge"
+  },
+  "service": [
+    {
+      "name": "payments",
+      "url": "https://payments.internal",
+      "headers": {
+        "x-service": "checkout-api"
+      },
+      "retry": {
+        "attempts": 3,
+        "backoff": 250
+      },
+      "route": [
+        {
+          "path": "/v1/charges",
+          "methods": [
+            "POST"
+          ],
+          "rate_limit": {
+            "requests_per_second": 50,
+            "burst": 100
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+The full document also carries the block's `meta`, which xcl fills in: the
+resource id, the file and line it was parsed from, and the resources it
+depends on.
+
+## What to notice
+
+- **A config file, not an infrastructure graph.** One resource, no providers,
+  no lifecycle. xcl is worth using for this alone, for the comments, the
+  variables, the functions and the types.
+- **JSON maps across one to one.** An object is a block, an array of objects
+  is a repeated block, a free form object is a map attribute. What you get in
+  Go is the same tree you would have unmarshalled.
+- **Secrets stay out of the file.** `env("DB_PASSWORD")` is evaluated at
+  parse time. `file()` and `template_file()` work the same way.
+- **The environment can override it.** Any variable can be set with
+  `HCL_VAR_<name>`, so `HCL_VAR_environment=staging` changes the parsed
+  configuration without touching the file.
+
+</Prose>
+
+<CtaBanner
+  heading="More than one file, more than one type"
+  body="The other two examples link several resources together, and give them a lifecycle."
+>
+  <Button href="/examples/configuration-only/" label="Configuration only →" variant="primary" large />
+  <Button href="/examples/plugins/" label="Plugins and the lifecycle →" variant="secondary" large />
+</CtaBanner>

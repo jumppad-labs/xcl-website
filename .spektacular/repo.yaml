@@ -1,0 +1,21 @@
+description: The documentation site for xcl, served at xcl.dev, built with Astro 5 (MDX) and Tailwind CSS v4.
+role: documentation
+tags:
+    - astro
+    - mdx
+    - tailwind
+    - documentation
+    - static-site
+    - xcl
+source:
+    provider: file
+    config:
+        location: ..
+knowledge:
+    provider: file
+    config:
+        location: knowledge
+changelog:
+    provider: file
+    config:
+        directory: changelog

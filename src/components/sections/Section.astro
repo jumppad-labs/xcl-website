@@ -1,0 +1,35 @@
+---
+import SectionHeader from "./SectionHeader.astro";
+
+interface Props {
+  heading: string;
+  sub?: string;
+  surface?: boolean;
+  id?: string;
+  maxWidth?: string;
+}
+
+const {
+  heading,
+  sub,
+  surface = false,
+  id,
+  maxWidth = "max-w-[1100px]",
+} = Astro.props;
+
+const hasSubSlot = Astro.slots.has("sub");
+---
+<section id={id} class={`py-xl scroll-mt-[60px] max-sm:py-lg ${surface ? "bg-bg-surface" : ""}`}>
+  <div class={`mx-auto ${maxWidth} px-md`}>
+    {hasSubSlot ? (
+      <SectionHeader heading={heading}>
+        <slot name="sub" />
+      </SectionHeader>
+    ) : (
+      <SectionHeader heading={heading} sub={sub} />
+    )}
+    <div class="xcl-section-body">
+      <slot />
+    </div>
+  </div>
+</section>

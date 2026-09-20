@@ -1,0 +1,202 @@
+---
+layout: ../layouts/Shell.astro
+title: "xcl: HCL, extended for Go"
+description: "xcl is a superset of HCL for Go. Define your configuration as Go structs and get references, variables, modules, functions, plugins and state on top of the language you already know."
+---
+import Hero from "../components/sections/Hero.astro";
+import Section from "../components/sections/Section.astro";
+import FeaturesGrid from "../components/sections/FeaturesGrid.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Badge from "../components/Badge.astro";
+import Button from "../components/Button.astro";
+import InstallBlock from "../components/InstallBlock.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+
+<Hero
+  variant="centered"
+  heading="HCL, extended<br />for Go."
+  sub="xcl is a superset of HCL. Define your configuration as Go structs, and get references, variables, modules, functions, plugins and state on top of the language you already know."
+>
+  <Badge slot="badge" text="v2 · early development" variant="green" dot />
+  <InstallBlock slot="install" command="go get github.com/jumppad-labs/xcl" />
+  <Button href="/examples/application-config/" label="See an example →" variant="primary" large />
+  <Button href="https://github.com/jumppad-labs/xcl" label="View on GitHub" variant="secondary" large external />
+</Hero>
+
+<Section heading="What is xcl?" surface>
+
+  [HCL](https://github.com/hashicorp/hcl), the HashiCorp Configuration
+  Language, is a syntax: blocks, attributes and expressions. It is a great
+  language to write configuration in, but on its own it does not know what
+  your blocks mean, how they relate to each other, or what should happen when
+  they change.
+
+  xcl is a Go library that adds that layer. Every `.xcl` file is plain HCL
+  syntax, so editors, formatters and your existing knowledge all carry over.
+  On top of the syntax, xcl gives you a schema taken from your own Go structs,
+  references between blocks, a dependency graph that orders everything,
+  variables, outputs and modules, a library of functions, and a lifecycle
+  with state so a configuration can be applied, changed and destroyed.
+
+  You describe a block type once, as a Go struct with `xcl` tags:
+
+```go title="resources.go"
+// PostgreSQL defines the block type `postgres`
+type PostgreSQL struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Location string `xcl:"location" json:"location"`
+	Port     int    `xcl:"port" json:"port"`
+	Username string `xcl:"username" json:"username"`
+	Password string `xcl:"password" json:"password"`
+
+	// A nested block, optional because it is a pointer
+	Timeouts *Timeouts `xcl:"timeouts,block" json:"timeouts,omitempty"`
+
+	// Set by a provider, never by configuration
+	ConnectionString string `xcl:"connection_string,optional,computed" json:"connection_string,omitempty"`
+}
+```
+
+  Then write configuration against it. The reference to
+  `resource.postgres.main` is resolved for you, and it is what makes xcl
+  process `main` before `app.web`:
+
+```hcl title="main.xcl"
+variable "db_username" {
+  default = "admin"
+}
+
+resource "postgres" "main" {
+  location = "localhost"
+  port     = 5432
+  username = variable.db_username
+  password = env("DB_PASSWORD")
+
+  timeouts {
+    connection = 10
+  }
+}
+
+resource "app" "web" {
+  database_location = resource.postgres.main.location
+  connection_string = resource.postgres.main.connection_string
+}
+```
+
+  And read it back as your own Go type:
+
+```go title="main.go"
+r := registry.NewPluginRegistry(logger.NewStdOutLogger())
+r.RegisterType("postgres", &PostgreSQL{})
+
+c := xcl.NewConfig(xcl.WithPluginRegistry(r))
+err := c.Apply("./config")
+
+db, err := xcl.NewQuerier[PostgreSQL](c).FindResource("resource.postgres.main")
+```
+
+</Section>
+
+<FeaturesGrid
+  id="features"
+  heading="Everything HCL has, and more"
+  sub="The syntax is HCL. These are the features xcl adds on top of it."
+>
+  <FeatureCard icon="🧱" title="Go structs as the schema">
+    Block types are Go structs. `xcl` tags mark attributes as required or
+    `optional`, nest `block`s (a pointer is optional, a slice repeats), and
+    flag `computed` fields that only a provider can set.
+  </FeatureCard>
+
+  <FeatureCard icon="🔗" title="References between blocks">
+    Any attribute can read another block, like
+    `resource.postgres.main.location`, or take a whole block as a value.
+    References are resolved in order, so a value always exists before it is
+    read.
+  </FeatureCard>
+
+  <FeatureCard icon="🕸️" title="Dependency graph">
+    References and `depends_on` build a graph. Blocks are applied in
+    dependency order, independent blocks run concurrently, and destroy runs
+    in reverse. Cycles are reported as errors.
+  </FeatureCard>
+
+  <FeatureCard icon="🎛️" title="Variables and outputs">
+    `variable` blocks take defaults that can be overridden from Go with
+    `WithVariables`, or from the environment with `HCL_VAR_<name>`. `output`
+    blocks expose values, including lists and maps.
+  </FeatureCard>
+
+  <FeatureCard icon="📦" title="Modules">
+    A `module` block loads a directory of `.xcl` files as one scoped unit.
+    Pass values in with `variables`, and read its outputs with
+    `module.<name>.output.<name>`. Modules can nest.
+  </FeatureCard>
+
+  <FeatureCard icon="ƒ" title="Functions">
+    Around sixty built in: the HCL standard library (`format`, `join`,
+    `jsonencode`, `merge`, `regex` and more) plus `env`, `file`,
+    `template_file`, `home`, `dir`, `len` and `element`.
+  </FeatureCard>
+
+  <FeatureCard icon="🔌" title="Plugins and providers">
+    A provider gives a block type a lifecycle: `Create`, `Read`, `Changed`,
+    `Update` and `Destroy`. Plugins run in-process, or as a separate binary
+    over gRPC.
+  </FeatureCard>
+
+  <FeatureCard icon="📝" title="Configuration only">
+    Not everything needs a lifecycle. `RegisterType` adds a plain Go type
+    with no plugin. It still takes part in references, modules and state, and
+    no provider is ever called.
+  </FeatureCard>
+
+  <FeatureCard icon="💾" title="State, apply and destroy">
+    `Apply` saves what it applied, and a block removed from configuration is
+    destroyed on the next run. `Destroy` needs only the saved state, and an
+    interrupted destroy picks up where it stopped.
+  </FeatureCard>
+
+  <FeatureCard icon="🔎" title="Typed queries">
+    `NewQuerier[T]` returns resources as your own Go type, found by path or
+    listed by block type. No type assertions.
+  </FeatureCard>
+
+  <FeatureCard icon="📡" title="Lifecycle events">
+    `WithEventHandler` is called for every block as it is parsed, and before
+    and after every provider call, with the resource, the operation and how
+    long it took.
+  </FeatureCard>
+
+  <FeatureCard icon="✅" title="Validation">
+    `Validate` checks syntax, schema, references and the graph without
+    calling a provider or changing anything, and reports every problem it
+    finds at once.
+  </FeatureCard>
+</FeaturesGrid>
+
+<Section heading="Three examples" surface>
+
+  The [examples](https://github.com/jumppad-labs/xcl/tree/main/example) in the
+  repository each run on their own, with `make run`, and each show one way xcl
+  is used.
+
+  - [Plugins and the lifecycle](/examples/plugins/): two plugins, one
+    in-process and one external over gRPC, whose providers create and destroy
+    every resource in the configuration.
+  - [Configuration only](/examples/configuration-only/): a Kubernetes-like
+    deployment parsed into Go types, with resources linked to each other by
+    reference. No plugins.
+  - [An application config file](/examples/application-config/): one file,
+    deeply nested, the kind of configuration usually written as JSON.
+
+</Section>
+
+<CtaBanner
+  heading="Start with an example"
+  body="xcl is free and open source. Clone the repository and run any example with <code>make run</code>."
+>
+  <Button href="/examples/application-config/" label="An application config file →" variant="primary" large />
+  <Button href="/examples/plugins/" label="Plugins and the lifecycle →" variant="secondary" large />
+</CtaBanner>
