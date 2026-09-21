@@ -1,5 +1,3 @@
-schema: 2
-written_by: 0.15.1
 description: The documentation site for xcl, served at xcl.dev, built with Astro 5 (MDX) and Tailwind CSS v4.
 role: documentation
 tags:

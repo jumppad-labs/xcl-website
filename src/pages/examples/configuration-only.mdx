@@ -257,11 +257,11 @@ if err := c.Apply(dir); err != nil {
 }
 ```
 
-`NewQuerier` hands the resources back as your own Go types, by block type or
+`FindByType` and `Find` hand the entities back as your own Go types, by kind or
 by path, and everything nested inside them is an ordinary Go struct or slice.
 
 ```go title="example/configonly/main.go"
-deployments, err := xcl.NewQuerier[resources.Deployment](c).FindResourcesByType("deployment")
+deployments, err := xcl.FindByType[resources.Deployment](c, "resource", "deployment")
 if err != nil {
 	return err
 }

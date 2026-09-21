@@ -286,13 +286,13 @@ if err := c.Apply(dir); err != nil {
 ```
 
 Plugin types are held as types generated from the plugin's schema. The
-querier copies them into your Go type, so reading them back looks the same as
+lookup copies them into your Go type, so reading them back looks the same as
 it does without plugins:
 
 ```go title="example/plugin/main.go"
 // Plugin types are held as types generated from the plugin's schema, the
-// querier copies them into the Go type
-databases, err := xcl.NewQuerier[resources.PostgreSQL](c).FindResourcesByType("postgres")
+// the lookup copies them into the Go type
+databases, err := xcl.FindByType[resources.PostgreSQL](c, "resource", "postgres")
 ```
 
 At the end the example calls `Destroy`, which works from the saved state

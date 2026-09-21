@@ -91,9 +91,16 @@ r := registry.NewPluginRegistry(logger.NewStdOutLogger())
 r.RegisterType("postgres", &PostgreSQL{})
 
 c := xcl.NewConfig(xcl.WithPluginRegistry(r))
-err := c.Apply("./config")
+if err := c.Apply("./config"); err != nil {
+	return err
+}
 
-db, err := xcl.NewQuerier[PostgreSQL](c).FindResource("resource.postgres.main")
+db, err := xcl.Find[PostgreSQL](c, "resource.postgres.main")
+if err != nil {
+	return err
+}
+
+fmt.Println(db.Location, db.Port)
 ```
 
 </Section>
@@ -159,8 +166,8 @@ db, err := xcl.NewQuerier[PostgreSQL](c).FindResource("resource.postgres.main")
   </FeatureCard>
 
   <FeatureCard icon="🔎" title="Typed queries">
-    `NewQuerier[T]` returns resources as your own Go type, found by path or
-    listed by block type. No type assertions.
+    `Find[T]` and `FindByType[T]` return entities as your own Go type, by
+    address or by kind. No type assertions.
   </FeatureCard>
 
   <FeatureCard icon="📡" title="Lifecycle events">
