@@ -1,0 +1,213 @@
+---
+layout: ../layouts/Shell.astro
+title: "Plugin logging and loading - xcl"
+description: "How a provider logs with plugins.Logger(ctx), how xcl adds the resource and step for it, and when registered plugins are loaded."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+
+<Hero
+  heading="Plugin logging and loading"
+  sub="A provider logs a message and nothing else. xcl adds the plugin, the resource and the step, the same for in-process and external plugins, and loads plugins only when they are first needed."
+/>
+
+<Prose>
+
+Plugins never write output. Everything a plugin logs becomes an event on the
+same stream as xcl's own, delivered to the application's receiver, so a
+plugin's messages sit between the lifecycle events of the call they were
+logged in. How that stream works is covered in
+[Events and logging](/events/). This page is for plugin authors, and for the
+applications that register their plugins.
+
+## Logging from a provider
+
+A provider logs through `plugins.Logger(ctx)`, the logger in the context of
+the call it is handling. It has the familiar `Debug`, `Info`, `Warn` and
+`Error` methods, each taking a message and key/value details:
+
+```go title="example/plugin/internal/plugin.go"
+// Create sets the computed connection string, configured fields are never
+// changed
+func (p *postgresProvider) Create(ctx context.Context, db *resources.PostgreSQL) (*resources.PostgreSQL, error) {
+	db.ConnectionString = connectionString(db)
+	plugins.Logger(ctx).Info("created database", "connection_string", db.ConnectionString)
+
+	return db, nil
+}
+```
+
+Keep no logger on the provider. Providers are called concurrently for
+different resources, and each call carries its own logger in its context.
+Outside a provider call, `plugins.Logger(ctx)` returns a logger that emits
+nothing.
+
+## The resource and step come for free
+
+Before each call, xcl binds the context's logger to the resource being worked
+on, its type, the file it was declared in and the step, `create`, `read`,
+`changed`, `update` or `destroy`. It also names the plugin as the event's
+source: the Go type name of an in-process plugin, or the file name of an
+external plugin's binary. The provider passes none of it.
+
+So the one-line `Info` above arrives between the call's `start` and its
+`success`, carrying everything a reader needs to place it. Through the
+examples' receiver it looks like this:
+
+```text
+1:01PM INFO create start source=core operation=create phase=start resource=resource.postgres.main type=postgres.main file=config/main.xcl
+1:01PM INFO created database source=ExamplePlugin operation=create phase=log resource=resource.postgres.main type=postgres.main file=config/main.xcl connection_string=postgres://admin@localhost:5432/main
+1:01PM INFO create success source=core operation=create phase=success resource=resource.postgres.main type=postgres.main file=config/main.xcl duration=32.718µs
+```
+
+The message is in the event's `Meta` under `message`, its level under
+`level`, and the provider's own details under their own names.
+
+## In-process and external plugins
+
+A provider logs the same way whether its plugin is compiled into the program
+or runs as a separate binary over gRPC. Inside an external plugin,
+`plugins.Logger(ctx)` sends each message back to the host, tagged with the
+call it belongs to, and the host gives it that call's resource, step and
+receiver, so it arrives exactly where an in-process message would:
+
+```go title="example/plugin/external/main.go"
+// Create receives the app with every reference resolved, including the
+// connection strings the in-process postgres and redis providers filled in,
+// and sets the computed url that the ingress block reads
+func (p *appProvider) Create(ctx context.Context, app *resources.App) (*resources.App, error) {
+	app.URL = appURL(app)
+	plugins.Logger(ctx).Info("created app",
+		"connection_string", app.ConnectionString, "cache_connection_string", app.CacheConnectionString, "url", app.URL)
+
+	return app, nil
+}
+```
+
+```text
+1:01PM INFO created app source=external operation=create phase=log resource=resource.app.web type=app.web file=config/main.xcl cache_connection_string=redis://localhost:6379 connection_string=postgres://admin@localhost:5432/main url=http://web
+```
+
+One difference to know about: details cross the process boundary as text.
+The host turns them back into integers, floats and booleans where they parse
+as one, so a detail logged by an external plugin may not keep its original
+Go type. A receiver that needs an exact type should not rely on it for
+external plugins.
+
+## The Init logger
+
+`Init` runs when the plugin loads, before any provider call, so it has no
+call context. The logger it receives is plugin scoped instead: its messages
+carry the plugin as their source and `load` as their operation, and no
+resource. Use it for messages written outside a call, and pass it on to
+`RegisterResourceProvider`, which hands each provider's `Init` its own copy
+with `provider=<block type>` added.
+
+```go title="example/plugin/internal/plugin.go"
+func (p *ExamplePlugin) Init(logger logger.Logger, state plugins.State) error {
+	logger.Debug("registering block types", "block_types", "postgres, redis")
+```
+
+```go title="example/plugin/internal/plugin.go"
+func (p *postgresProvider) Init(state plugins.State, functions plugins.ProviderFunctions, logger logger.Logger) error {
+	logger.Debug("provider ready")
+
+	return nil
+}
+```
+
+At debug, the example shows both:
+
+```text
+1:01PM DEBU registering block types source=ExamplePlugin operation=load phase=log block_types="postgres, redis"
+1:01PM DEBU provider ready source=ExamplePlugin operation=load phase=log provider=postgres
+1:01PM DEBU provider ready source=ExamplePlugin operation=load phase=log provider=redis
+```
+
+In an external plugin, `Init` runs before the host has connected, so the
+plugin scoped logger sends each message once the connection is there. Those
+messages may arrive out of order, and are dropped if the host can not be
+reached. Logging never changes the outcome of a call.
+
+## Registering plugins
+
+The registry takes no logger, and registering a plugin only records it:
+
+```go title="main.go"
+r := registry.NewPluginRegistry()
+
+err := r.RegisterPlugin(&MyPlugin{})                  // an in-process plugin
+err = r.RegisterPluginWithPath("./bin/xcl-plugin-x") // an external plugin binary
+r.DiscoverPlugins([]string{"~/.xcl/plugins"}, "")    // directories to search
+```
+
+`RegisterPlugin` takes an in-process plugin, `RegisterPluginWithPath` the
+path to an external plugin binary, and `DiscoverPlugins(dirs, pattern)` the
+directories to search for plugin binaries. None of them starts, checks or
+searches anything.
+
+## Loading when first needed
+
+Plugins load at the start of the first `Validate`, `Apply` or `Destroy`, and
+only once per registry, however many configs share it. Discovery is reported
+as `discover` events, and each plugin starting and being checked as `load`
+events, before the operation parses anything:
+
+```text
+1:01PM INFO apply start source=core operation=apply phase=start
+1:01PM INFO load start source=core operation=load phase=start plugin=ExamplePlugin
+1:01PM INFO load success source=core operation=load phase=success block_types="postgres, redis" plugin=ExamplePlugin
+1:01PM INFO load start source=core operation=load phase=start plugin=external
+1:01PM INFO load success source=core operation=load phase=success block_types="app, ingress" plugin=external
+```
+
+A discovered binary that turns out not to be a plugin is rejected, reported
+as a `load` error event with the detail `rejected=true`, and the rest carry
+on, unless every discovered plugin fails.
+
+## When a plugin fails to load
+
+A registered plugin that fails to load, such as a path with no binary behind
+it, fails that first operation with an error matching `xcl.ErrPluginLoad`.
+Its detail, `*xcl.PluginLoadError`, names the plugin in `Plugin` and the
+reason in `Err`:
+
+```go title="example/plugin/main.go"
+if err := c.Apply(dir); err != nil {
+	// a plugin that fails to load is reported by the first operation,
+	// the likeliest cause is an external plugin that was not built
+	if errors.Is(err, xcl.ErrPluginLoad) {
+		return nil, fmt.Errorf("%w, build it with `make build` in example/plugin", err)
+	}
+
+	return nil, err
+}
+```
+
+```text
+error: plugin ./build/missing failed to load: failed to get plugin client: fork/exec ./build/missing: no such file or directory, build it with `make build` in example/plugin
+```
+
+## Type name clashes
+
+Every block type name is unique across xcl's builtins, types registered with
+`RegisterType` and the types plugins provide. When a clash is found depends
+on what can be known at the time:
+
+- **`RegisterType` fails straight away** when the name is already taken by a
+  builtin, a registered type or a type from a plugin that has already loaded.
+- **A plugin's types are only known once it loads,** so a plugin type whose
+  name clashes fails the load, and the operation that loaded it, with a
+  `*registry.TypeNameClashError` naming the type.
+
+</Prose>
+
+<CtaBanner
+  heading="See it run"
+  body="The plugins example logs from an in-process and an external plugin, through one pretty receiver."
+>
+  <Button href="/examples/plugins/" label="Plugins example →" variant="primary" large />
+  <Button href="/events/" label="Events and logging →" variant="secondary" large />
+</CtaBanner>

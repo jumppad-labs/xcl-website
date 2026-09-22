@@ -1,0 +1,247 @@
+---
+layout: ../layouts/Shell.astro
+title: "Events and logging - xcl"
+description: "xcl writes no output of its own. Every lifecycle step, plugin load, warning, error and plugin log message is one ordered stream of events delivered to your receiver."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+
+<Hero
+  heading="Events and logging"
+  sub="xcl writes no output of its own. Everything it and its plugins report is one ordered stream of events, delivered to the receiver you give it."
+/>
+
+<Prose>
+
+A library that prints is a library you have to fight. xcl never writes to
+standard output or standard error, and never touches the standard library's
+global logger. Instead, everything it and its plugins report, each step of
+the resource lifecycle, plugin discovery and loading, warnings, errors and
+the messages plugins log, is one stream of events delivered to the receiver
+set with `xcl.WithEventHandler`. With no receiver, xcl is silent.
+
+## Connecting to slog in one line
+
+xcl ships an adapter to the standard library's `log/slog`, so the quickest
+way to see the stream is one option:
+
+```go title="main.go"
+c := xcl.NewConfig(
+	xcl.WithPluginRegistry(r),
+	xcl.WithEventHandler(events.SlogHandler(slog.Default())),
+)
+```
+
+`events.SlogHandler` takes any `*slog.Logger`, so the stream goes wherever
+the rest of your program's logs go, in whatever format its handler writes.
+Log messages are written at their own level, with their own text. Lifecycle,
+discovery and load events are written at info, as `<operation> <phase>`,
+failures at error, and a blocked announcement at warn. Filtering is left to
+the slog handler's level, so a logger at info writes no debug messages.
+
+Each event's fields become the attributes `source`, `operation`, `phase`,
+`resource`, `type`, `file`, `duration` and `error`, when they are set,
+followed by its details in key order.
+
+## The event
+
+Every event is an `xcl.Event`, an alias of `events.Event`. There is one flat
+shape for all of them, whether it is xcl creating a resource or a plugin
+logging a message:
+
+| Field | Meaning |
+|---|---|
+| `Time` | when it happened |
+| `Source` | `core` for xcl itself, otherwise the name of the plugin it came from |
+| `Operation` | the operation or step the event belongs to |
+| `Phase` | where in that operation it is |
+| `ResourceType`, `ResourceID`, `File` | the resource the event is about, and the file it was declared in |
+| `Duration` | how long a step took, or how long emitting was blocked |
+| `Error` | the failure, for the `error` phase |
+| `Data` | the serialized resource, for lifecycle events only |
+| `Meta` | the details, keyed by name |
+
+A log message's level and text are in `Meta`, under the reserved keys
+`events.KeyLevel` (`level`) and `events.KeyMessage` (`message`). The level is
+one of `debug`, `info`, `warn` or `error`. The details a caller passes with a
+message are the other keys, under their own names, and never overwrite the
+reserved two.
+
+To handle events yourself, `EventHandler` is a function that takes an event:
+
+```go title="main.go"
+var failures []error
+
+c := xcl.NewConfig(
+	xcl.WithPluginRegistry(r),
+	xcl.WithEventHandler(func(e xcl.Event) {
+		if e.Phase == events.PhaseError {
+			failures = append(failures, e.Error)
+		}
+	}),
+)
+```
+
+## Operations and phases
+
+The operations and phases are defined as constants in the `events` package.
+
+| Operation | What it covers |
+|---|---|
+| `validate`, `apply`, `destroy` | a whole call to `Validate`, `Apply` or `Destroy` |
+| `parse` | one block as it is read, with the file it came from |
+| `create`, `read`, `changed`, `update`, `destroy` | one provider call for one resource |
+| `discover` | searching the directories given to `DiscoverPlugins` |
+| `load` | starting and checking one plugin, and anything a plugin logs outside a provider call |
+| `events` | the event stream itself, for a `blocked` announcement |
+
+| Phase | Meaning |
+|---|---|
+| `start` | the operation or step is starting |
+| `success` | it finished, with its `Duration` |
+| `error` | it failed, with its `Error` |
+| `log` | a log message, with its level and text in `Meta` |
+| `blocked` | emitting had to wait for the receiver |
+
+Each `Validate`, `Apply` and `Destroy` starts with its own `start` event and
+ends with a `success`, or an `error` carrying the error it returns. In
+between come the `load` events for any plugins loading, the `parse` events,
+and for each resource a `start` before each provider call, then any messages
+the provider logs during that call, with the call's step as their operation,
+then the call's `success` or `error`. Every failure that is returned is also
+emitted as an error event, including each problem validation finds.
+
+This is how one resource looks through the example's receiver, the
+[plugin example](/examples/plugins/) creating a database:
+
+```text
+1:01PM INFO create start source=core operation=create phase=start resource=resource.postgres.main type=postgres.main file=config/main.xcl
+1:01PM INFO created database source=ExamplePlugin operation=create phase=log resource=resource.postgres.main type=postgres.main file=config/main.xcl connection_string=postgres://admin@localhost:5432/main
+1:01PM INFO create success source=core operation=create phase=success resource=resource.postgres.main type=postgres.main file=config/main.xcl duration=32.718µs
+```
+
+## Sources
+
+`Source` says who is reporting. It is `core`, `events.SourceCore`, for
+everything xcl reports itself: the operations, parsing, loading and the
+lifecycle steps. A message a plugin logs carries the plugin's name instead:
+the Go type name of an in-process plugin, such as `ExamplePlugin`, or the
+file name of an external plugin's binary, such as `external`. The messages
+go-plugin writes while it starts an external plugin carry that plugin's name
+too, with the detail `component=go-plugin` so a receiver can tell them apart
+from the plugin's own.
+
+A plugin never sets these itself. How a plugin logs, and how its messages
+get their resource and step, is covered in
+[Plugin logging and loading](/plugin-logging/).
+
+## Delivery guarantees
+
+- **Ordered, one at a time.** The receiver is called with one event at a
+  time, in the order the events were emitted, never concurrently, on the
+  goroutine that called `Validate`, `Apply` or `Destroy`. It needs no locking
+  of its own.
+- **Never dropped.** Emitting never waits for the receiver. Undelivered
+  events are held in a bounded buffer, set with `xcl.WithEventBufferSize`
+  (default `xcl.DefaultEventBufferSize`, 1024). When the buffer is full,
+  emitting waits for the receiver to catch up rather than dropping an event.
+- **Blocking is announced.** Once emitting can continue after waiting, the
+  receiver is sent one event with the operation `events` and the phase
+  `blocked`, whose `Duration` says how long it waited. A receiver that sees
+  these is slower than the work it is watching.
+- **Delivered before return.** Every event of a call has been delivered
+  before `Validate`, `Apply` or `Destroy` returns, whether it succeeds or
+  fails.
+
+```go title="main.go"
+c := xcl.NewConfig(
+	xcl.WithPluginRegistry(r),
+	xcl.WithEventHandler(handler),
+	// hold more undelivered events before emitting waits
+	xcl.WithEventBufferSize(4096),
+)
+```
+
+## Errors and panics in the receiver
+
+A receiver returns nothing, so it can not fail an operation, and the failures
+an operation returns reach it as `error` events as well as the returned
+error.
+
+A panic in the receiver is not recovered. xcl starts no new provider call,
+lets the calls already in progress finish, and saves state, so nothing that
+was created is forgotten. Then the panic continues from `Validate`, `Apply`
+or `Destroy` with its original value and stack.
+
+## A pretty receiver
+
+The examples share a receiver,
+[`example/prettylog`](https://github.com/jumppad-labs/xcl/tree/main/example/prettylog),
+which shows how little an application needs. It is `events.SlogHandler`
+wrapped around a slog handler from
+[charmbracelet/log](https://github.com/charmbracelet/log), chosen for its
+readable, coloured terminal output. It is an example, not part of xcl, so it
+never becomes a dependency of an application that uses xcl.
+
+```go title="example/prettylog/prettylog.go"
+func Handler(w io.Writer, level slog.Level) xcl.EventHandler {
+	logger := charmlog.NewWithOptions(w, charmlog.Options{
+		Level:           charmlog.Level(level),
+		ReportTimestamp: true,
+		TimeFormat:      time.Kitchen,
+	})
+
+	logger.SetStyles(styles())
+
+	return events.SlogHandler(slog.New(logger))
+}
+```
+
+Every example sets it up in one line, writing to standard error at the level
+named by `XCL_LOG_LEVEL`, one of `debug`, `info`, `warn` or `error`, and info
+when it is unset:
+
+```go title="example/plugin/main.go"
+_, err = run(os.Stdout, prettylog.Handler(os.Stderr, prettylog.LevelFromEnv()), dir, externalPlugin, filepath.Join(stateDir, "state.json"))
+```
+
+A plugin that fails to load, here an external plugin binary that was never
+built, shows up as a `load` error and then fails the `apply`:
+
+```text
+1:03PM INFO apply start source=core operation=apply phase=start
+1:03PM INFO load start source=core operation=load phase=start plugin=ExamplePlugin
+1:03PM INFO load success source=core operation=load phase=success block_types="postgres, redis" plugin=ExamplePlugin
+1:03PM INFO load start source=core operation=load phase=start plugin=missing
+1:03PM ERRO load error source=core operation=load phase=error error="plugin ./build/missing failed to load: failed to get plugin client: fork/exec ./build/missing: no such file or directory" plugin=missing
+1:03PM ERRO apply error source=core operation=apply phase=error duration=759.036µs error="plugin ./build/missing failed to load: failed to get plugin client: fork/exec ./build/missing: no such file or directory"
+```
+
+## The one exception
+
+xcl runs external plugins with HashiCorp's
+[go-plugin](https://github.com/hashicorp/go-plugin), and one message escapes
+the stream. When an external plugin is stopped within milliseconds of
+starting, go-plugin v1.6.3 writes this to standard error through the standard
+library's global logger:
+
+```text
+[ERR] plugin: plugin acceptAndServe error: broker closed
+```
+
+It is outside xcl's control, and xcl deliberately does not change the global
+logger to hide it. The rest of what go-plugin reports reaches the stream as
+log events with `component=go-plugin`: its info and debug messages at debug,
+its warnings and errors at their own level.
+
+</Prose>
+
+<CtaBanner
+  heading="Log from your own plugins"
+  body="Providers log through the logger in the call's context, and xcl adds the resource and step for them."
+>
+  <Button href="/plugin-logging/" label="Plugin logging and loading →" variant="primary" large />
+  <Button href="/examples/plugins/" label="Plugins example →" variant="secondary" large />
+</CtaBanner>

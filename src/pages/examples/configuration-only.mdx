@@ -216,10 +216,18 @@ output "api_url" {
 ## The program
 
 Register each Go type under the block type name used in configuration, give
-the config a state store, and apply.
+the config a state store, and apply. `run` takes the receiver for xcl's
+[events](/events/) as `handler`, and `main` passes it the example's pretty
+terminal receiver in one line:
 
 ```go title="example/configonly/main.go"
-r := registry.NewPluginRegistry(log)
+_, err = run(os.Stdout, prettylog.Handler(os.Stderr, prettylog.LevelFromEnv()), dir, filepath.Join(stateDir, "state.json"))
+```
+
+The registry takes no logger, and xcl writes nothing unless a receiver is set.
+
+```go title="example/configonly/main.go"
+r := registry.NewPluginRegistry()
 
 // Register each Go type under the block type name used in configuration.
 // A registered type needs nothing else: no plugin, no provider, no schema
@@ -249,7 +257,7 @@ if err != nil {
 c := xcl.NewConfig(
 	xcl.WithPluginRegistry(r),
 	xcl.WithStateStore(store),
-	xcl.WithEventHandler(eventlog.Handler(log)),
+	xcl.WithEventHandler(handler),
 )
 
 if err := c.Apply(dir); err != nil {
@@ -289,10 +297,34 @@ From the `example/configonly` directory:
 make run
 ```
 
-Alongside the lifecycle events, which the example logs at debug, it prints
-the parsed configuration:
+The events go to standard error, trimmed here to a few of each. Every step is logged at info, `core` is xcl
+itself, and each line names the resource and the file it came from. The
+level is read from `XCL_LOG_LEVEL` and defaults to info:
 
 ```text
+1:01PM INFO apply start source=core operation=apply phase=start
+1:01PM INFO parse success source=core operation=parse phase=success resource=resource.config_map.api type=config_map.api file=config/main.xcl
+1:01PM INFO parse success source=core operation=parse phase=success resource=resource.deployment.api type=deployment.api file=config/main.xcl
+1:01PM INFO create success source=core operation=create phase=success resource=resource.config_map.api type=config_map.api file=config/main.xcl
+1:01PM INFO create success source=core operation=create phase=success resource=resource.deployment.api type=deployment.api file=config/main.xcl
+1:01PM INFO create success source=core operation=create phase=success resource=resource.service.api type=service.api file=config/main.xcl
+1:01PM INFO create success source=core operation=create phase=success resource=resource.ingress.api type=ingress.api file=config/main.xcl
+1:01PM INFO apply success source=core operation=apply phase=success duration=11.970556ms
+```
+
+No registered type has a provider, so each block goes straight to `create
+success` with no `start` in between. The program's own output, on standard
+output, is the parsed configuration:
+
+```text
+## Resources
+  resource.config_map.api
+  resource.deployment.api
+  resource.service.api
+  resource.ingress.api
+  output.api_url
+  variable.image_tag
+  variable.replicas
 ## Deployments
   resource.deployment.api replicas=3
     container api image=ghcr.io/example/api:1.2.0
@@ -311,6 +343,8 @@ the parsed configuration:
 ## Ingress
   resource.ingress.api host=api.example.com
     rule path=/ service=resource.service.api port=80
+## Destroyed
+  0 resources remaining
 ```
 
 ## What to notice

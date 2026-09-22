@@ -87,10 +87,14 @@ resource "app" "web" {
   And read it back as your own Go type:
 
 ```go title="main.go"
-r := registry.NewPluginRegistry(logger.NewStdOutLogger())
+r := registry.NewPluginRegistry()
 r.RegisterType("postgres", &PostgreSQL{})
 
-c := xcl.NewConfig(xcl.WithPluginRegistry(r))
+c := xcl.NewConfig(
+	xcl.WithPluginRegistry(r),
+	// optional, xcl writes nothing of its own without a receiver
+	xcl.WithEventHandler(events.SlogHandler(slog.Default())),
+)
 if err := c.Apply("./config"); err != nil {
 	return err
 }
@@ -170,10 +174,11 @@ fmt.Println(db.Location, db.Port)
     address or by kind. No type assertions.
   </FeatureCard>
 
-  <FeatureCard icon="📡" title="Lifecycle events">
-    `WithEventHandler` is called for every block as it is parsed, and before
-    and after every provider call, with the resource, the operation and how
-    long it took.
+  <FeatureCard icon="📡" title="Events and logging">
+    xcl writes no output of its own. Every lifecycle step, plugin load,
+    warning, error and plugin log message is one ordered stream of events to
+    `WithEventHandler`, and one line connects it to `log/slog`.
+    [Events and logging →](/events/)
   </FeatureCard>
 
   <FeatureCard icon="✅" title="Validation">

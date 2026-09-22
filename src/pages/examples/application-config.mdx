@@ -272,10 +272,13 @@ output "listen_address" {
 ## The program
 
 One block type, one Go type, one query. Everything nested inside is reached
-through the fields of that type.
+through the fields of that type. `handler` receives xcl's
+[events](/events/); `main` passes it the example's pretty terminal receiver,
+which writes them to standard error at the level in `XCL_LOG_LEVEL` (info by
+default).
 
 ```go title="example/appconfig/main.go"
-r := registry.NewPluginRegistry(log)
+r := registry.NewPluginRegistry()
 
 // One block type, one Go type. Everything nested inside it is reached
 // through the fields of that type.
@@ -291,7 +294,7 @@ if err != nil {
 c := xcl.NewConfig(
 	xcl.WithPluginRegistry(r),
 	xcl.WithStateStore(store),
-	xcl.WithEventHandler(eventlog.Handler(log)),
+	xcl.WithEventHandler(handler),
 )
 
 if err := c.Apply(dir); err != nil {

@@ -44,8 +44,16 @@ external plugin and reads `connection_string` from `postgres` and `redis`,
 which the in-process plugin computes.
 
 ```hcl title="example/plugin/config/main.xcl"
+# The example configuration, shared by the configonly and plugin examples.
+#
+# Variables can be overridden with environment variables prefixed HCL_VAR_,
+# i.e. HCL_VAR_db_username.
 variable "db_username" {
   default = "admin"
+}
+
+variable "db_password" {
+  default = "password"
 }
 
 resource "postgres" "main" {
@@ -108,6 +116,10 @@ resource "ingress" "web" {
   hostname = "example.com"
   app_url  = resource.app.web.url
 }
+
+output "web_database" {
+  value = resource.app.web.database_location
+}
 ```
 
 A computed field is declared on the Go type. It can not be set in
@@ -124,18 +136,22 @@ ConnectionString string `xcl:"connection_string,optional,computed" json:"connect
 
 A plugin embeds `plugins.PluginBase` and registers the block types it
 provides in `Init`, calling `RegisterResourceProvider` once per type with the
-type's Go struct and its provider.
+type's Go struct and its provider. The logger `Init` receives is plugin
+scoped: it is for messages written outside a provider call, and xcl names the
+plugin as the source of everything it logs.
 
 ```go title="example/plugin/internal/plugin.go"
-// ExamplePlugin is an in-process plugin, it is compiled into this program and
-// called directly. It provides the postgres and redis block types, the app and
-// ingress block types are provided by the external plugin in ./external.
-type ExamplePlugin struct {
-	plugins.PluginBase
-}
-
+// Init registers the block types the plugin provides, with their providers. A
+// plugin provides as many block types as it likes, each is registered with its
+// own provider by calling RegisterResourceProvider once per type.
+//
+// logger is plugin scoped, for messages written outside a provider call like
+// this one. xcl names the plugin, ExamplePlugin, as the source of everything
+// it logs, and adds provider=<block type> to what each provider's Init logs.
+// During a call the providers log through plugins.Logger(ctx) instead, which
+// xcl binds to the resource and step being worked on.
 func (p *ExamplePlugin) Init(logger logger.Logger, state plugins.State) error {
-	logger.Debug("", "event", "init")
+	logger.Debug("registering block types", "block_types", "postgres, redis")
 
 	err := plugins.RegisterResourceProvider(
 		&p.PluginBase,
@@ -168,18 +184,37 @@ provider would create a database here. This one sets the computed connection
 string, which xcl then hands to every block that references it. Change
 detection comes from the embedded `DefaultChanged`.
 
+Each method logs through `plugins.Logger(ctx)`, the logger xcl puts in the
+call's context. It is already bound to the resource, its type, its file and
+the step, so the provider passes only what it has to say. The provider keeps
+no logger of its own: providers are called concurrently for different
+resources, and each call carries its own.
+
 ```go title="example/plugin/internal/plugin.go"
+// postgresProvider handles the lifecycle of postgres blocks. A real provider
+// would create a database, this one only fills in the connection string.
+//
+// Change detection comes from the embedded DefaultChanged.
 type postgresProvider struct {
 	plugins.DefaultChanged[*resources.PostgreSQL]
+}
 
-	logger logger.Logger
+var _ plugins.ResourceProvider[*resources.PostgreSQL] = (*postgresProvider)(nil)
+
+// Init is called once when the provider is registered. The logger it receives
+// is plugin scoped and adds provider=postgres to every message. The provider
+// does not keep it, during a call it logs through plugins.Logger(ctx).
+func (p *postgresProvider) Init(state plugins.State, functions plugins.ProviderFunctions, logger logger.Logger) error {
+	logger.Debug("provider ready")
+
+	return nil
 }
 
 // Create sets the computed connection string, configured fields are never
 // changed
 func (p *postgresProvider) Create(ctx context.Context, db *resources.PostgreSQL) (*resources.PostgreSQL, error) {
 	db.ConnectionString = connectionString(db)
-	p.logger.Debug("", "event", "create", "resource", db.Meta.ID, "connection_string", db.ConnectionString)
+	plugins.Logger(ctx).Info("created database", "connection_string", db.ConnectionString)
 
 	return db, nil
 }
@@ -187,7 +222,7 @@ func (p *postgresProvider) Create(ctx context.Context, db *resources.PostgreSQL)
 // Read reports the database as configured, xcl has already carried the
 // computed connection string over from the previous state
 func (p *postgresProvider) Read(ctx context.Context, old *resources.PostgreSQL, new *resources.PostgreSQL) (*resources.PostgreSQL, error) {
-	p.logger.Debug("", "event", "read", "resource", new.Meta.ID)
+	plugins.Logger(ctx).Info("read database")
 
 	return new, nil
 }
@@ -195,14 +230,14 @@ func (p *postgresProvider) Read(ctx context.Context, old *resources.PostgreSQL, 
 // Update sets the computed connection string for the changed configuration
 func (p *postgresProvider) Update(ctx context.Context, db *resources.PostgreSQL) (*resources.PostgreSQL, error) {
 	db.ConnectionString = connectionString(db)
-	p.logger.Debug("", "event", "update", "resource", db.Meta.ID, "connection_string", db.ConnectionString)
+	plugins.Logger(ctx).Info("updated database", "connection_string", db.ConnectionString)
 
 	return db, nil
 }
 
 // Destroy would remove the database, there is nothing to remove here
 func (p *postgresProvider) Destroy(ctx context.Context, db *resources.PostgreSQL, force bool) error {
-	p.logger.Debug("", "event", "destroy", "resource", db.Meta.ID, "force", force)
+	plugins.Logger(ctx).Info("destroyed database", "force", force)
 
 	return nil
 }
@@ -210,9 +245,11 @@ func (p *postgresProvider) Destroy(ctx context.Context, db *resources.PostgreSQL
 
 ## An external plugin
 
-An external plugin is written exactly the same way. The only difference is
-`main`, which serves the plugin over gRPC to the host that started the
-process.
+An external plugin is written exactly the same way, and logs the same way:
+`plugins.Logger(ctx)` works inside the plugin process just as it does
+in-process, and the host gives each message its call's resource and step. The
+only difference is `main`, which serves the plugin over gRPC to the host that
+started the process.
 
 ```go title="example/plugin/external/main.go"
 // Create receives the app with every reference resolved, including the
@@ -220,7 +257,7 @@ process.
 // and sets the computed url that the ingress block reads
 func (p *appProvider) Create(ctx context.Context, app *resources.App) (*resources.App, error) {
 	app.URL = appURL(app)
-	p.logger.Debug("", "event", "create", "resource", app.Meta.ID,
+	plugins.Logger(ctx).Info("created app",
 		"connection_string", app.ConnectionString, "cache_connection_string", app.CacheConnectionString, "url", app.URL)
 
 	return app, nil
@@ -240,14 +277,22 @@ func main() {
 }
 ```
 
+Details logged across the process boundary arrive as text. xcl turns them
+back into numbers and booleans where they parse as one, so a value may not
+keep its original Go type.
+
 ## The program
 
-`RegisterPlugin` takes an in-process plugin. `RegisterPluginWithPath` starts
-an external plugin binary and registers the block types it provides. Each
-plugin brings its own block types with it, so nothing else needs registering.
+Registering a plugin only records it. `RegisterPlugin` takes an in-process
+plugin and `RegisterPluginWithPath` an external plugin binary, and neither
+starts or checks anything. The plugins load at the start of the first
+`Apply`, once per registry, and each brings its own block types with it, so
+nothing else needs registering. A registered plugin that fails to load, such
+as a binary that was never built, fails that `Apply` with an error matching
+`xcl.ErrPluginLoad`, which the example turns into a hint.
 
 ```go title="example/plugin/main.go"
-r := registry.NewPluginRegistry(log)
+r := registry.NewPluginRegistry()
 
 // The external plugin runs as a separate process, stop it when done
 defer func() {
@@ -257,15 +302,15 @@ defer func() {
 }()
 
 // Register the in-process plugin, which provides every block type it
-// registered in Init
+// registers in Init. Registering only records the plugin, it is loaded
+// by the first Apply.
 if err := r.RegisterPlugin(&internal.ExamplePlugin{}); err != nil {
 	return nil, err
 }
 
-// Start the external plugin binary and register the block types it
-// provides
+// Register the external plugin binary, it is started by the first Apply
 if err := r.RegisterPluginWithPath(externalPlugin); err != nil {
-	return nil, fmt.Errorf("%w, build it with `make build` in example/plugin", err)
+	return nil, err
 }
 
 // Keep the state in a file, Destroy works from it alone
@@ -277,12 +322,26 @@ if err != nil {
 c := xcl.NewConfig(
 	xcl.WithPluginRegistry(r),
 	xcl.WithStateStore(store),
-	xcl.WithEventHandler(eventlog.Handler(log)),
+	xcl.WithEventHandler(handler),
 )
 
 if err := c.Apply(dir); err != nil {
+	// a plugin that fails to load is reported by the first operation,
+	// the likeliest cause is an external plugin that was not built
+	if errors.Is(err, xcl.ErrPluginLoad) {
+		return nil, fmt.Errorf("%w, build it with `make build` in example/plugin", err)
+	}
+
 	return nil, err
 }
+```
+
+`run` takes the receiver for xcl's [events](/events/) as `handler`. `main`
+passes it the example's pretty terminal receiver in one line, writing to
+standard error at the level in `XCL_LOG_LEVEL`, info by default:
+
+```go title="example/plugin/main.go"
+_, err = run(os.Stdout, prettylog.Handler(os.Stderr, prettylog.LevelFromEnv()), dir, externalPlugin, filepath.Join(stateDir, "state.json"))
 ```
 
 Plugin types are held as types generated from the plugin's schema. The
@@ -291,7 +350,7 @@ it does without plugins:
 
 ```go title="example/plugin/main.go"
 // Plugin types are held as types generated from the plugin's schema, the
-// the lookup copies them into the Go type
+// lookup copies them into the Go type
 databases, err := xcl.FindByType[resources.PostgreSQL](c, "resource", "postgres")
 ```
 
@@ -308,50 +367,86 @@ into `build/` and then runs the example:
 make run
 ```
 
-The external plugin is started as a process and handshakes over gRPC, then
-each plugin reports the block types it provides:
+The events go to standard error. The `Apply` starts, then both plugins load,
+the external one started as a process, each reporting the block types it
+provides:
 
 ```text
-DEBU event=go-plugin plugin=external starting plugin path=build/external args=[build/external]
-DEBU event=go-plugin plugin=external plugin started path=build/external pid=1225302
-DEBU event=go-plugin plugin=external using plugin version=1
-DEBU event=load plugin=ExamplePlugin plugin loaded block_types="postgres, redis"
-DEBU event=load plugin=external plugin loaded block_types="app, ingress"
+1:01PM INFO apply start source=core operation=apply phase=start
+1:01PM INFO load start source=core operation=load phase=start plugin=ExamplePlugin
+1:01PM INFO load success source=core operation=load phase=success block_types="postgres, redis" plugin=ExamplePlugin
+1:01PM INFO load start source=core operation=load phase=start plugin=external
+1:01PM INFO load success source=core operation=load phase=success block_types="app, ingress" plugin=external
 ```
 
-Then the lifecycle runs. Everything a plugin logs is tagged with the plugin,
-and everything a provider logs with the provider as well, so the two
-providers inside one plugin are told apart:
+Then the lifecycle runs. Here it is for three resources, trimmed from the
+full run:
 
 ```text
-DEBU event=create resource=resource.postgres.main phase=start
-DEBU event=create plugin=ExamplePlugin provider=postgres calling provider resource=resource.postgres.main
-DEBU event=create plugin=ExamplePlugin provider=postgres resource=resource.postgres.main connection_string=postgres://admin@localhost:5432/main
-DEBU event=create resource=resource.postgres.main phase=success duration=85.259µs
-DEBU event=create resource=resource.app.web phase=start
-DEBU event=create plugin=external provider=app calling provider resource=resource.app.web
-DEBU event=create plugin=external provider=app resource=resource.app.web connection_string=postgres://admin@localhost:5432/main cache_connection_string=redis://localhost:6379 url=http://web
-DEBU event=create resource=resource.app.web phase=success duration=1.255321ms
-DEBU event=create resource=resource.ingress.web phase=start
-DEBU event=create plugin=external provider=ingress calling provider resource=resource.ingress.web
-DEBU event=create plugin=external provider=ingress resource=resource.ingress.web hostname=example.com app_url=http://web
-DEBU event=create resource=resource.ingress.web phase=success duration=1.148211ms
+1:01PM INFO create start source=core operation=create phase=start resource=resource.postgres.main type=postgres.main file=config/main.xcl
+1:01PM INFO created database source=ExamplePlugin operation=create phase=log resource=resource.postgres.main type=postgres.main file=config/main.xcl connection_string=postgres://admin@localhost:5432/main
+1:01PM INFO create success source=core operation=create phase=success resource=resource.postgres.main type=postgres.main file=config/main.xcl duration=32.718µs
+1:01PM INFO create start source=core operation=create phase=start resource=resource.app.web type=app.web file=config/main.xcl
+1:01PM INFO created app source=external operation=create phase=log resource=resource.app.web type=app.web file=config/main.xcl cache_connection_string=redis://localhost:6379 connection_string=postgres://admin@localhost:5432/main url=http://web
+1:01PM INFO create success source=core operation=create phase=success resource=resource.app.web type=app.web file=config/main.xcl duration=1.341985ms
+1:01PM INFO create start source=core operation=create phase=start resource=resource.ingress.web type=ingress.web file=config/main.xcl
+1:01PM INFO created ingress source=external operation=create phase=log resource=resource.ingress.web type=ingress.web file=config/main.xcl app_url=http://web hostname=example.com
+1:01PM INFO create success source=core operation=create phase=success resource=resource.ingress.web type=ingress.web file=config/main.xcl duration=669.953µs
+1:01PM INFO apply success source=core operation=apply phase=success duration=21.926587ms
 ```
 
-The program's own output shows every computed value filled in, including the
-ones that crossed between the two plugins:
+Each provider call is a `start` and a `success` from `core`, xcl itself, and
+anything the provider logs arrives between them. The provider's message
+carries the plugin as its `source`, `ExamplePlugin` in-process and `external`
+for the binary, and the `resource`, `type`, `file` and step (`operation`) of
+the call it was logged in, although the provider passed only the message and
+its own details.
+
+With `XCL_LOG_LEVEL=debug` the plugin scoped messages show as well: what each
+`Init` logged, with `provider=` added for a provider's `Init`, and
+go-plugin's own messages about starting the external process, marked
+`component=go-plugin`:
 
 ```text
+1:01PM DEBU registering block types source=ExamplePlugin operation=load phase=log block_types="postgres, redis"
+1:01PM DEBU provider ready source=ExamplePlugin operation=load phase=log provider=postgres
+1:01PM DEBU provider ready source=ExamplePlugin operation=load phase=log provider=redis
+1:01PM DEBU starting plugin source=external operation=load phase=log args=[./build/external] component=go-plugin path=./build/external
+1:01PM DEBU plugin started source=external operation=load phase=log component=go-plugin path=./build/external pid=375558
+1:01PM DEBU using plugin source=external operation=load phase=log component=go-plugin version=1
+```
+
+The program's own output, on standard output, shows every computed value
+filled in, including the ones that crossed between the two plugins:
+
+```text
+## Resources
+  module.analytics.variable.db_username
+  module.analytics.output.location
+  output.web_database
+  variable.db_username
+  variable.db_password
+  resource.postgres.replica
+  resource.redis.cache
+  module.analytics.resource.postgres.analytics
+  resource.app.web
+  resource.ingress.web
+  resource.postgres.main
+  module.analytics
 ## Databases
+  resource.postgres.replica location=replica.localhost port=5433 connection_string="postgres://admin@replica.localhost:5433/main"
   module.analytics.resource.postgres.analytics location=analytics.localhost port=5432 connection_string="postgres://analytics@analytics.localhost:5432/analytics"
   resource.postgres.main location=localhost port=5432 connection_string="postgres://admin@localhost:5432/main"
-  resource.postgres.replica location=replica.localhost port=5433 connection_string="postgres://admin@replica.localhost:5433/main"
 ## Caches
   resource.redis.cache location=localhost port=6379 connection_string="redis://localhost:6379"
 ## App
   resource.app.web database_location=localhost database_user=admin analytics_location=analytics.localhost connection_string="postgres://admin@localhost:5432/main" cache_connection_string="redis://localhost:6379" url="http://web"
 ## Ingress
   resource.ingress.web hostname=example.com app_url="http://web"
+## Published
+  output.web_database="localhost"
+  module.analytics.output.location="analytics.localhost"
+  2 published in total
 ## Destroyed
   0 resources remaining
 ```
@@ -363,11 +458,15 @@ ones that crossed between the two plugins:
   resolved, because `app.web` references them and so is always created after
   them.
 - **One plugin, many block types.** Each plugin calls
-  `RegisterResourceProvider` once per block type, and every log line names
-  the plugin and the provider it came from.
+  `RegisterResourceProvider` once per block type, and every message a
+  provider logs names the plugin and the resource and step it was logged in.
 - **In-process and external look the same.** Both plugins are written against
-  the same `plugins` package. Only how they are registered, and the `main`
-  that serves the external one, differ.
+  the same `plugins` package and log through the same `plugins.Logger(ctx)`.
+  Only how they are registered, and the `main` that serves the external one,
+  differ.
+- **Plugins load when first needed.** Registering only records a plugin. It
+  is started and checked by the first `Apply`, and a plugin that fails to load
+  fails it with `xcl.ErrPluginLoad`.
 - **Destroy calls the providers.** `Destroy` works from the saved state
   alone, calls each provider's `Destroy` dependents first, and saves the
   state after each one, so an interrupted destroy picks up where it stopped.

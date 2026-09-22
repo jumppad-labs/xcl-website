@@ -33,6 +33,8 @@ Outputs the static site to `dist/`. The deploy workflow at
 | Page | Source |
 |---|---|
 | `/` | `src/pages/index.mdx`: what xcl is and the features it adds to HCL |
+| `/events/` | `src/pages/events.mdx`: the event stream, delivery guarantees and connecting it to `log/slog` |
+| `/plugin-logging/` | `src/pages/plugin-logging.mdx`: logging from a provider, and when registered plugins load |
 | `/examples/application-config/` | `src/pages/examples/application-config.mdx` |
 | `/examples/configuration-only/` | `src/pages/examples/configuration-only.mdx` |
 | `/examples/plugins/` | `src/pages/examples/plugins.mdx` |
