@@ -286,16 +286,15 @@ if err := r.RegisterType("application", &resources.Application{}); err != nil {
 	return nil, err
 }
 
-store, err := state.NewFileStateStore(statePath, r)
+c, err := xcl.NewConfig(
+	xcl.WithPluginRegistry(r),
+	// Keep the state in a file, Destroy works from it alone
+	xcl.WithStatePath(statePath),
+	xcl.WithEventHandler(handler),
+)
 if err != nil {
 	return nil, err
 }
-
-c := xcl.NewConfig(
-	xcl.WithPluginRegistry(r),
-	xcl.WithStateStore(store),
-	xcl.WithEventHandler(handler),
-)
 
 if err := c.Apply(dir); err != nil {
 	return nil, err
