@@ -221,57 +221,81 @@ the config a state store, and apply. `run` takes the receiver for xcl's
 terminal receiver in one line:
 
 ```go title="example/configonly/main.go"
-_, err = run(os.Stdout, prettylog.Handler(os.Stderr, prettylog.LevelFromEnv()), dir, filepath.Join(stateDir, "state.json"))
-```
-
-The registry takes no logger, and xcl writes nothing unless a receiver is set.
-
-```go title="example/configonly/main.go"
 r := registry.NewPluginRegistry()
 
-// Register each Go type under the block type name used in configuration.
-// A registered type needs nothing else: no plugin, no provider, no schema
-// to write by hand.
-if err := r.RegisterType("config_map", &resources.ConfigMap{}); err != nil {
-	return nil, err
-}
-
-if err := r.RegisterType("deployment", &resources.Deployment{}); err != nil {
-	return nil, err
-}
-
-if err := r.RegisterType("service", &resources.Service{}); err != nil {
-	return nil, err
-}
-
-if err := r.RegisterType("ingress", &resources.Ingress{}); err != nil {
-	return nil, err
-}
-
-c, err := xcl.NewConfig(
-	xcl.WithPluginRegistry(r),
-	// Keep the state in a file, Destroy works from it alone
-	xcl.WithStatePath(statePath),
-	xcl.WithEventHandler(handler),
-)
-if err != nil {
-	return nil, err
-}
-
-if err := c.Apply(dir); err != nil {
-	return nil, err
-}
+_, err = run(os.Stdout, prettylog.Handler(os.Stderr, prettylog.LevelFromEnv(), r), r, dir, stateDir)
 ```
 
-`FindByType` and `Find` hand the entities back as your own Go types, by kind or
-by path, and everything nested inside them is an ordinary Go struct or slice.
+The registry is built in `main` so the receiver can share it: it is what types
+the entity an event carries. xcl writes nothing unless a receiver is set.
 
 ```go title="example/configonly/main.go"
-deployments, err := xcl.FindByType[resources.Deployment](c, "resource", "deployment")
-if err != nil {
-	return err
+func run(out io.Writer, handler xcl.EventHandler, r *registry.PluginRegistry, dir string, stateDir string) ([]any, error) {
+
+	// Register each Go type under the block type name used in configuration.
+	// A registered type needs nothing else: no plugin, no provider, no schema
+	// to write by hand.
+	if err := r.RegisterType(&resources.ConfigMap{}, "resource", "config_map"); err != nil {
+		return nil, err
+	}
+
+	if err := r.RegisterType(&resources.Deployment{}, "resource", "deployment"); err != nil {
+		return nil, err
+	}
+
+	if err := r.RegisterType(&resources.Service{}, "resource", "service"); err != nil {
+		return nil, err
+	}
+
+	if err := r.RegisterType(&resources.Ingress{}, "resource", "ingress"); err != nil {
+		return nil, err
+	}
+
+	c, err := xcl.NewConfig(
+		xcl.WithPluginRegistry(r),
+		// Keep the state in a file, Destroy works from it alone
+		xcl.WithStatePath(stateDir),
+		xcl.WithEventHandler(handler),
+		// events carry nothing by default, this asks for each resource as
+		// state records it, which is what the receiver turns back into
+		// configuration text
+		xcl.WithEventData(xcl.EventDataProcessed),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.Apply(dir); err != nil {
+		return nil, err
+	}
+```
+
+One `Decode` call then gathers the whole configuration into a struct of the
+program's own. Each slice field receives every block of its type, in the order
+the blocks were written, and each pointer field receives the one block of its
+type. Reading a new block type is one new field, with no lookup code.
+`Find` is still there for a single entity by its address.
+
+```go title="example/configonly/main.go"
+type appConfig struct {
+	ConfigMaps  []*resources.ConfigMap
+	Deployments []*resources.Deployment
+	Service     *resources.Service
+	Ingress     *resources.Ingress
 }
 
+var cfg appConfig
+if err := c.Decode(&cfg); err != nil {
+	return nil, err
+}
+
+printDeployments(out, cfg.Deployments)
+```
+
+The blocks come back as your own Go types, the configuration's own instances,
+and everything nested inside them is an ordinary Go struct or slice.
+
+```go title="example/configonly/main.go"
 for _, d := range deployments {
 	for _, container := range d.Containers {
 		for _, port := range container.Ports {
@@ -316,13 +340,13 @@ output, is the parsed configuration:
 
 ```text
 ## Resources
+  variable.image_tag
+  variable.replicas
   resource.config_map.api
   resource.deployment.api
   resource.service.api
   resource.ingress.api
   output.api_url
-  variable.image_tag
-  variable.replicas
 ## Deployments
   resource.deployment.api replicas=3
     container api image=ghcr.io/example/api:1.2.0
@@ -360,6 +384,9 @@ output, is the parsed configuration:
   concurrently.
 - **Nesting is just Go.** `container[0].port[0]` in configuration is
   `Containers[0].Ports[0]` in Go, and an omitted block is nil.
+- **One call gathers the configuration.** `Decode` fills the program's own
+  struct by field type, so there is no lookup per block type, and a new block
+  type needs only a new field.
 
 </Prose>
 
