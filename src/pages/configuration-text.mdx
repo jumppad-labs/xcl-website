@@ -1,0 +1,162 @@
+---
+layout: ../layouts/Shell.astro
+title: "Configuration text - xcl"
+description: "Turn an entity, or its saved data, back into configuration text in xcl's own syntax, with provider-filled values, sensitive values and references shown the way you ask."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+
+<Hero
+  heading="Configuration text"
+  sub="Turn an entity, or the data state saved for it, back into configuration text in xcl's own syntax, ready to print or write to a .xcl file."
+/>
+
+<Prose>
+
+Showing someone what a configuration holds is easiest in the syntax they
+wrote it in. `xcl.EncodeEntity` turns one entity back into configuration text,
+and `xcl.EncodeSavedEntity` does the same from its saved data. Both write
+exactly one block, so convert several entities by calling once for each.
+
+## Converting an entity
+
+Pass any entity a lookup returns:
+
+```go title="main.go"
+db, err := xcl.Find[*Postgres](c, "resource.postgres.main")
+if err != nil {
+	return err
+}
+
+text, err := xcl.EncodeEntity(db)
+if err != nil {
+	return err
+}
+
+fmt.Println(string(text))
+```
+
+```hcl
+resource "postgres" "main" {
+  location = "localhost"
+  port     = 5432
+
+  timeouts {
+    connection = 10
+    keep_alive = 60
+  }
+}
+```
+
+The text shows what a person wrote. xcl's own bookkeeping is not written, and
+neither is `depends_on`. A `variable`, `output` or `module` is never written as
+configuration, and asking for one fails with `xcl.ErrNotEncodable`.
+
+## Converting saved data
+
+`EncodeSavedEntity` takes an entity's saved data, in the form state stores it
+and events carry it at `xcl.EventDataProcessed`. It needs the registry, which is
+what types the record, and loads its plugins if they are not loaded already:
+
+```go
+text, err := xcl.EncodeSavedEntity(registry, event.Data)
+```
+
+The text is identical to what `EncodeEntity` returns for the same entity. A
+record naming a type the registry does not know fails with
+`xcl.ErrUnregisteredType`, and data that is not one saved record with
+`xcl.ErrInvalidSavedData`.
+
+## Provider-filled values
+
+Values a provider filled in, such as an address or an id it assigned, are left
+out by default. Ask for them with `xcl.IncludeComputed()`, and each one is
+marked so a reader can tell it apart:
+
+```go
+text, err := xcl.EncodeEntity(db, xcl.IncludeComputed())
+```
+
+```hcl
+resource "postgres" "main" {
+  location          = "localhost"
+  port              = 5432
+  connection_string = "postgres://admin@localhost:5432/main" # set by the provider
+}
+```
+
+## Sensitive values
+
+A sensitive value is written as the marker `"(sensitive)"`. Pass
+`xcl.RevealSensitive()` to write the real value. Event data carries the marker
+rather than the value, so text made from event data shows the marker even when
+revealing is asked for. See [Sensitive values](/sensitive-values/) for
+declaring a field sensitive.
+
+## Showing references as written
+
+By default a field that referred to another entity shows the value it resolved
+to. Ask for `xcl.ShowReferences()` and each such field is written exactly as the
+user wrote it instead, whether a bare reference, a template or a reference in a
+nested block. Given this configuration:
+
+```hcl
+resource "app" "web" {
+  db_location = resource.postgres.main.location
+  url         = "https://${resource.postgres.main.location}/app"
+}
+```
+
+```go
+text, err := xcl.EncodeEntity(app, xcl.ShowReferences())
+```
+
+the text shows each reference as it was written:
+
+```hcl
+resource "app" "web" {
+  db_location = resource.postgres.main.location
+  url         = "https://${resource.postgres.main.location}/app"
+}
+```
+
+Without the option the same entity is written with its resolved values:
+
+```hcl
+resource "app" "web" {
+  db_location = "localhost"
+  url         = "https://localhost/app"
+}
+```
+
+It works the same from saved data,
+`xcl.EncodeSavedEntity(registry, record, xcl.ShowReferences())`, and the two
+give byte-identical text, since the references are kept in each entity's saved
+record. It combines with `xcl.IncludeComputed()`.
+
+A sensitive field shows its reference only when it was written as a single bare
+reference, such as `password = variable.db_password`, since an address holds no
+secret. Written any other way it keeps `"(sensitive)"`, unless
+`xcl.RevealSensitive()` is also given. State saved by an earlier version of xcl
+holds no references, so its text shows resolved values until the configuration
+is applied again.
+
+## For reading, not reprocessing
+
+Configuration text is for people to read. By default references come out as
+the literal values they resolved to, unless you ask for `ShowReferences`.
+Comments and layout from the original file are not kept, and text including
+provider-filled values does not validate, since xcl refuses a configuration
+that sets them.
+
+</Prose>
+
+<CtaBanner
+  heading="See it run"
+  body="The configuration-only example reads a configuration without any plugin and prints what it declares."
+>
+  <Button href="/examples/configuration-only/" label="Configuration only example →" variant="primary" large />
+  <Button href="/sensitive-values/" label="Sensitive values →" variant="secondary" large />
+</CtaBanner>
