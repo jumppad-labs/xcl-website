@@ -352,6 +352,29 @@ it does without plugins:
 databases, err := xcl.FindByType[resources.PostgreSQL](c, "resource", "postgres")
 ```
 
+An output is an entity like everything else. The lookup returns a
+`types.Output`, and the value it publishes is on its `Value` field:
+
+```go title="example/plugin/main.go"
+// An output is an entity like everything else: it is found by its address
+// as a types.Output, and the value it publishes is on its Value field
+webDatabase, err := xcl.Find[types.Output](c, "output.web_database")
+if err != nil {
+	return nil, err
+}
+
+moduleLocation, err := xcl.Find[types.Output](c, "module.analytics.output.location")
+if err != nil {
+	return nil, err
+}
+
+fmt.Fprintf(out, "  output.web_database=%q\n", webDatabase.Value)
+fmt.Fprintf(out, "  module.analytics.output.location=%q\n", moduleLocation.Value)
+
+// or every published value at once, keyed by address
+fmt.Fprintf(out, "  %d published in total\n", len(c.Outputs()))
+```
+
 At the end the example calls `Destroy`, which works from the saved state
 alone and calls each provider's `Destroy`, dependents before what they depend
 on.
@@ -465,6 +488,20 @@ filled in, including the ones that crossed between the two plugins:
 - **Plugins load when first needed.** Registering only records a plugin. It
   is started and checked by the first `Apply`, and a plugin that fails to load
   fails it with `xcl.ErrPluginLoad`.
+- **A module is reached through its outputs.** `app.web` reads
+  `module.analytics.output.location`, never the module's database directly.
+  A reference to anything inside a module other than one of its outputs, such
+  as `module.analytics.resource.postgres.analytics.location`, fails validation
+  with an error naming it. A value from a module nested deeper is exposed by
+  re-exporting it as an output of each module in between:
+
+  ```hcl
+  # inside module "analytics", which uses a module "replica"
+  output "replica_location" {
+    value = module.replica.output.location
+  }
+  ```
+
 - **Destroy calls the providers.** `Destroy` works from the saved state
   alone, calls each provider's `Destroy` dependents first, and saves the
   state after each one, so an interrupted destroy picks up where it stopped.

@@ -140,13 +140,17 @@ fmt.Println(db.Location, db.Port)
   <FeatureCard icon="🎛️" title="Variables and outputs">
     `variable` blocks take defaults that can be overridden from Go with
     `WithVariables`, or from the environment with `HCL_VAR_<name>`. `output`
-    blocks expose values, including lists and maps.
+    blocks expose values, including lists and maps. In Go an output is an
+    entity like any other: `Find[types.Output]` returns it, and `.Value`
+    holds what it publishes.
   </FeatureCard>
 
   <FeatureCard icon="📦" title="Modules">
     A `module` block loads a directory of `.xcl` files as one scoped unit.
     Pass values in with `variables`, and read its outputs with
-    `module.<name>.output.<name>`. Modules can nest.
+    `module.<name>.output.<name>`. Outputs are the only way in: anything
+    else inside a module is rejected by validation. Modules can nest, and a
+    nested module's value is exposed by re-exporting it as an output.
   </FeatureCard>
 
   <FeatureCard icon="ƒ" title="Functions">
