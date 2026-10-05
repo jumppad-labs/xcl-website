@@ -365,8 +365,9 @@ It prints the configuration as a tree, so the shape is visible:
 ```
 
 Then it prints the same resource as JSON, which is the document this
-configuration replaces. The `json` tags name every field, and it is also how
-the resource is saved to state:
+configuration replaces. The `json` tags name every field. The database
+password is declared `types.Sensitive[string]`, so `json.MarshalIndent` writes
+it as the marker, while state keeps the real value:
 
 ```json title="the printed JSON, abridged"
 {
@@ -379,6 +380,15 @@ the resource is saved to state:
   "labels": {
     "component": "api",
     "tier": "edge"
+  },
+  "database": {
+    "driver": "postgres",
+    "host": "postgres.internal",
+    "port": 5432,
+    "name": "checkout",
+    "username": "checkout",
+    "password": "(sensitive)",
+    ...
   },
   "service": [
     {
@@ -422,6 +432,11 @@ depends on.
   Go is the same tree you would have unmarshalled.
 - **Secrets stay out of the file.** `env("DB_PASSWORD")` is evaluated at
   parse time. `file()` and `template_file()` work the same way.
+- **Secrets stay out of the output.** The password field is
+  `types.Sensitive[string]`, so the tree, the JSON and every log show
+  `(sensitive)`. The program reads the real value with `Reveal()` only to build
+  its database connection string, which it never prints. See
+  [Sensitive values](/sensitive-values/).
 - **The environment can override it.** Any variable can be set with
   `HCL_VAR_<name>`, so `HCL_VAR_environment=staging` changes the parsed
   configuration without touching the file.
