@@ -32,6 +32,10 @@ the call it is handling. It has the familiar `Debug`, `Info`, `Warn` and
 // Create sets the computed connection string, configured fields are never
 // changed
 func (p *postgresProvider) Create(ctx context.Context, db *resources.PostgreSQL) (*resources.PostgreSQL, error) {
+	if err := connect(db); err != nil {
+		return nil, err
+	}
+
 	db.ConnectionString = connectionString(db)
 	plugins.Logger(ctx).Info("created database", "connection_string", db.ConnectionString)
 
@@ -43,6 +47,12 @@ Keep no logger on the provider. Providers are called concurrently for
 different resources, and each call carries its own logger in its context.
 Outside a provider call, `plugins.Logger(ctx)` returns a logger that emits
 nothing.
+
+The database password is a `types.Sensitive[string]`. `connect` is the one
+place the provider reads it with `Reveal()`, and the connection string it logs
+leaves the password out. Logging a sensitive field itself is safe, it writes
+`(sensitive)`, but a revealed value is no longer protected and must never be
+logged. See [Sensitive values](/sensitive-values/).
 
 ## The resource and step come for free
 

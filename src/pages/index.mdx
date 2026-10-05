@@ -48,7 +48,9 @@ type PostgreSQL struct {
 	Location string `xcl:"location" json:"location"`
 	Port     int    `xcl:"port" json:"port"`
 	Username string `xcl:"username" json:"username"`
-	Password string `xcl:"password" json:"password"`
+
+	// Sensitive: shown only as (sensitive), read with Reveal()
+	Password types.Sensitive[string] `xcl:"password" json:"password"`
 
 	// A nested block, optional because it is a pointer
 	Timeouts *Timeouts `xcl:"timeouts,block" json:"timeouts,omitempty"`
@@ -187,6 +189,13 @@ fmt.Println(db.Location, db.Port)
     warning, error and plugin log message is one ordered stream of events to
     `WithEventHandler`, and one line connects it to `log/slog`.
     [Events and logging →](/events/)
+  </FeatureCard>
+
+  <FeatureCard icon="🔒" title="Sensitive values">
+    Declare a field `types.Sensitive[T]` and its value shows only as
+    `(sensitive)` in logs, events, errors and your own JSON. State keeps the
+    real value, and `Reveal()` unwraps it.
+    [Sensitive values →](/sensitive-values/)
   </FeatureCard>
 
   <FeatureCard icon="✅" title="Validation">
