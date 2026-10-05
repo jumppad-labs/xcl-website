@@ -90,6 +90,49 @@ if err != nil {
 }
 ```
 
+## Sensitive values in event data
+
+Lifecycle events carry resource data only when you ask for it with
+`xcl.WithEventData`. When they do, every sensitive value in `Data` is written
+through the event masker. The default is `mask.Redact()`, which shows the
+marker inside an envelope naming the masker that produced it:
+
+```json
+"password": {"xcl_masked": "redact", "value": "(sensitive)"}
+```
+
+Choose another masker with `xcl.WithEventMask`. A keyed hash lets a receiver
+tell whether two events carry the same value without ever seeing it:
+
+```go title="main.go"
+eventMask, err := mask.HashHMACSHA256(correlationKey)
+if err != nil {
+	return err
+}
+
+c, err := xcl.NewConfig(
+	xcl.WithEventHandler(handler),
+	xcl.WithEventData(xcl.EventDataProcessed),
+	xcl.WithEventMask(eventMask),
+)
+```
+
+Any masker works here, including the built-ins `mask.Omit()`, which writes no
+value, `mask.EncryptAES256GCM(key)` and your own. When every receiver is
+trusted with secrets, `xcl.WithNoEventMask()` turns masking off and event data
+carries the real values. When both options are given, the last one wins.
+
+Event masking changes only `Data`. Errors and log details always show
+`(sensitive)`, whatever the event masker, because the sensitive type formats
+itself as the marker. A receiver holding a reversible masker can open a masked
+value with `mask.Unmask(data, m)`; anything it cannot open faithfully, such as
+a hash, data from a different masker or data under a different key, fails with
+`xcl.ErrUnrecoverable` and returns no value. `xcl.EncodeSavedEntity` shows
+every masked value as `(sensitive)`.
+
+To keep secrets out of the state file as well, see
+[State masking](/state-masking/).
+
 ## Operations and phases
 
 The operations and phases are defined as constants in the `events` package.

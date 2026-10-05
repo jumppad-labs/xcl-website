@@ -1,0 +1,149 @@
+---
+layout: ../layouts/Shell.astro
+title: "State masking - xcl"
+description: "Encrypt the sensitive values xcl keeps in state with xcl.WithStateMask and mask.EncryptAES256GCM, read them back with the same key, and see the warning xcl gives while state holds them in plain text."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+
+<Hero
+  heading="State masking"
+  sub="Give xcl a key and every sensitive value is encrypted before it reaches state, and decrypted when state is loaded. Without one, xcl warns that state holds them in plain text."
+/>
+
+<Prose>
+
+xcl shows a [sensitive value](/sensitive-values/) only as `(sensitive)`, but
+state has to keep the real value, so a later run can read it back. A state
+masker encrypts each sensitive value as it is saved, so the state file never
+holds a secret in plain text, while everything else in it stays readable.
+
+## The plaintext state warning
+
+With no state masker, state holds sensitive values in plain text. Each
+`Apply` or `Destroy` that writes one to a state store emits a single
+warn-level log event from `core`:
+
+```text
+sensitive values are stored unencrypted in state; use xcl.WithStateMask to encrypt them
+```
+
+A configuration with no sensitive values, one with no state store and one with
+a state masker emit no such warning.
+
+## Encrypting state
+
+Pass a masker to `xcl.WithStateMask`. `mask.EncryptAES256GCM` takes a 32 byte
+key. Keep it wherever the application keeps its secrets and never commit it;
+here it comes from an environment variable:
+
+```go title="main.go"
+key, err := base64.StdEncoding.DecodeString(os.Getenv("XCL_STATE_KEY"))
+if err != nil {
+	return err
+}
+
+stateMask, err := mask.EncryptAES256GCM(key)
+if err != nil {
+	return err
+}
+
+c, err := xcl.NewConfig(
+	xcl.WithStatePath("./state"),
+	xcl.WithStateMask(stateMask),
+)
+```
+
+Each sensitive value is written in place of its value as an envelope naming
+the masker that produced it:
+
+```json
+"password": {"xcl_masked": "aes-256-gcm", "value": "o8Rk1x...base64..."}
+```
+
+A custom `StateStore` needs no change: the raw records it receives already
+hold the envelopes.
+
+## The state masker must be reversible
+
+State is read back to the real value, so the state masker must be able to
+recover what it masks: it must implement `mask.Reversible`. A one-way masker
+such as `mask.HashHMACSHA256`, `mask.Omit` or `mask.Redact` fails
+`xcl.NewConfig` with `xcl.ErrMaskNotReversible`:
+
+```text
+the state masker must be reversible: "hmac-sha256" cannot recover the values it masks
+```
+
+## Reloading, and the wrong key
+
+A new configuration with the same masker and key loads the state and reads
+back the real values. Loading state holding a value that cannot be opened
+fails with `xcl.ErrUnrecoverable`, naming the entity and the masker, rather
+than losing the secret:
+
+- state encrypted under a different key,
+- encrypted state loaded with no state masker,
+- state masked by a different masker.
+
+State written in plain text still loads once a masker is added, and the next
+save encrypts it. There is no key rotation: changing the key makes existing
+encrypted state unreadable, so keep the key for as long as the state exists.
+
+## Built-in maskers
+
+| Masker | Name | Reversible | What it writes |
+|---|---|---|---|
+| `mask.EncryptAES256GCM(key)` | `aes-256-gcm` | yes | AES-256-GCM ciphertext under a 32 byte key, base64, with a fresh nonce each time |
+| `mask.HashHMACSHA256(key)` | `hmac-sha256` | no | the hex HMAC-SHA256 of the value, the same for the same value and key |
+| `mask.Omit()` | `omit` | no | no value, only the envelope naming the masker |
+| `mask.Redact()` | `redact` | no | the marker `(sensitive)` |
+
+Only a reversible masker can be used for state. Any masker can be used for
+event data, see [Events and logging](/events/).
+
+## Writing your own masker
+
+A masker is any type with `Name` and `Mask`. `Mask` receives the JSON of the
+real value and returns the JSON to write as the envelope's `value`. To be used
+for state it also needs `Unmask`, which returns the original JSON, or an error
+when the value does not open:
+
+```go title="masker.go"
+type vaultMasker struct{ client *vault.Client }
+
+func (m vaultMasker) Name() string { return "vault-transit" }
+
+func (m vaultMasker) Mask(value json.RawMessage) (json.RawMessage, error) {
+	ciphertext, err := m.client.Encrypt(value)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(ciphertext)
+}
+
+func (m vaultMasker) Unmask(masked json.RawMessage) (json.RawMessage, error) {
+	var ciphertext string
+	if err := json.Unmarshal(masked, &ciphertext); err != nil {
+		return nil, err
+	}
+
+	return m.client.Decrypt(ciphertext)
+}
+```
+
+The key `xcl_masked` is reserved for envelopes: an object holding it, with at
+most a `value` beside it, is always read as masked data.
+
+</Prose>
+
+<CtaBanner
+  heading="See it run"
+  body="The application config and plugin examples encrypt their state when XCL_STATE_KEY holds a base64 encoded 32 byte key, and show the warning when it does not."
+>
+  <Button href="/examples/application-config/" label="Application config example →" variant="primary" large />
+  <Button href="/sensitive-values/" label="Sensitive values →" variant="secondary" large />
+</CtaBanner>
