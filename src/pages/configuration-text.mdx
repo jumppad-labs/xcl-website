@@ -95,6 +95,40 @@ rather than the value, so text made from event data shows the marker even when
 revealing is asked for. See [Sensitive values](/sensitive-values/) for
 declaring a field sensitive.
 
+## Dependency lists
+
+A `depends_on` list is written exactly as you wrote it, and left out when you
+wrote none. The dependencies xcl works out from references are never added to
+it, though they still order creation and destruction. Given this
+configuration:
+
+```hcl
+resource "app" "c" {
+  y = "blue"
+}
+
+resource "app" "a" {
+  depends_on = ["resource.app.b"]
+
+  x = resource.app.c.y
+}
+```
+
+the text for `resource.app.a` names only the dependency you wrote, while the
+reference to `resource.app.c` comes out as the value it resolved to:
+
+```hcl
+resource "app" "a" {
+  depends_on = ["resource.app.b"]
+
+  x = "blue"
+}
+```
+
+The list is the same after the configuration is applied and when it is loaded
+back from saved state, so text from a live entity and from its saved data
+matches.
+
 ## Showing references as written
 
 By default a field that referred to another entity shows the value it resolved
