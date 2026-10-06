@@ -18,7 +18,8 @@ import Button from "../components/Button.astro";
 Showing someone what a configuration holds is easiest in the syntax they
 wrote it in. `xcl.EncodeEntity` turns one entity back into configuration text,
 and `xcl.EncodeSavedEntity` does the same from its saved data. Both write
-exactly one block, so convert several entities by calling once for each.
+exactly one block, so convert several entities by calling once for each. Either
+can colour the text it writes, for a terminal or any other format.
 
 ## Converting an entity
 
@@ -176,6 +177,107 @@ secret. Written any other way it keeps `"(sensitive)"`, unless
 `xcl.RevealSensitive()` is also given. State saved by an earlier version of xcl
 holds no references, so its text shows resolved values until the configuration
 is applied again.
+
+## Highlighting
+
+Configuration text is plain unless you ask for highlighting. Pass
+`xcl.Highlight` a renderer and every token of the text is handed to it,
+labelled with the same name the xcl VS Code extension gives it, so the
+configuration in your terminal or your page looks the way it does in the
+editor. Highlighting combines with every other option, including
+`xcl.ShowReferences()`, whose references are coloured like any other text.
+
+### In a terminal
+
+xcl ships a terminal renderer in the `highlight` package. With no theme it
+uses only the terminal's 16 standard colours, so the result follows the
+user's own palette:
+
+```go
+import "github.com/jumppad-labs/xcl/highlight"
+
+renderer, err := highlight.NewANSIRenderer()
+if err != nil {
+	return err
+}
+
+text, err := xcl.EncodeEntity(entity, xcl.Highlight(renderer))
+```
+
+xcl never checks whether output is a terminal. Whether to colour is your
+decision, so ask for highlighting only when the output shows colour, for
+example:
+
+```go
+options := []xcl.EncodeOption{xcl.IncludeComputed()}
+if isTerminal(os.Stdout) {
+	options = append(options, xcl.Highlight(renderer))
+}
+
+text, err := xcl.EncodeEntity(entity, options...)
+```
+
+Here `isTerminal` is your application's own check. The
+[logging example](https://github.com/jumppad-labs/xcl/tree/main/example/prettylog)
+makes the same decision for its writer before asking for colour. Removing the
+colour codes from highlighted text gives back exactly the plain text, and each
+line is coloured on its own, so the text can be indented or prefixed line by
+line without colour leaking.
+
+### With an editor theme
+
+Give the renderer a VS Code colour theme and it colours tokens the way the
+editor does with that theme, in 24-bit colour, with the bold, italic,
+underline and strikethrough styles the theme sets:
+
+```go
+renderer, err := highlight.NewANSIRenderer(highlight.WithThemeFile("dark-plus.json"))
+if errors.Is(err, xcl.ErrInvalidTheme) {
+	var detail *xcl.InvalidThemeError
+	errors.As(err, &detail)
+	log.Fatalf("theme %s: %s", detail.Source, detail.Reason)
+}
+```
+
+`highlight.WithTheme` reads the theme from an `io.Reader` instead. The theme
+is the JSON file a VS Code theme extension ships, and comments and trailing
+commas are allowed, as the editor allows them. Only its `tokenColors` are
+used, and a token the theme has no rule for keeps the terminal's default
+colour. A theme that cannot be read, or is not valid, fails when the renderer
+is created with `xcl.ErrInvalidTheme`, rather than quietly falling back to
+the default colours. A theme that relies on `include` is rejected the same
+way, since it does not hold its own `tokenColors`.
+
+### Writing a renderer
+
+A renderer has one method, `Render(scope, text string) string`, and
+`highlight.RendererFunc` turns a plain function into one. It is called for
+every piece of the text, in order, and what it returns is joined together.
+`scope` is the TextMate scope the xcl-vscode grammar gives the piece, such as
+`storage.type.xcl` for a block type or `variable.other.property.xcl` for an
+attribute name. Text the grammar leaves unlabelled, such as whitespace, braces
+and commas, is passed too, with an empty scope, so a renderer for a format that
+needs escaping sees every byte:
+
+```go
+renderer := highlight.RendererFunc(func(scope, text string) string {
+	text = html.EscapeString(text)
+	if scope == "" {
+		return text
+	}
+
+	class := strings.ReplaceAll(strings.TrimSuffix(scope, ".xcl"), ".", "-")
+	return `<span class="` + class + `">` + text + `</span>`
+})
+
+text, err := xcl.EncodeEntity(entity, xcl.Highlight(renderer))
+```
+
+Every scope is exported as a string constant named `highlight.Scope...`, such as
+`highlight.ScopeAttribute` and `highlight.ScopeReference`, so a renderer can
+compare against them, or match a family by prefix, such as every scope
+starting with `comment.`. `highlight.Text(text, renderer)` highlights
+configuration text you already hold, without encoding an entity.
 
 ## For reading, not reprocessing
 

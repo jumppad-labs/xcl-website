@@ -238,7 +238,7 @@ readable, coloured terminal output. It is an example, not part of xcl, so it
 never becomes a dependency of an application that uses xcl.
 
 ```go title="example/prettylog/prettylog.go"
-func Handler(w io.Writer, level slog.Level) xcl.EventHandler {
+func Handler(w io.Writer, level slog.Level, reg *registry.PluginRegistry) xcl.EventHandler {
 	logger := charmlog.NewWithOptions(w, charmlog.Options{
 		Level:           charmlog.Level(level),
 		ReportTimestamp: true,
@@ -247,9 +247,16 @@ func Handler(w io.Writer, level slog.Level) xcl.EventHandler {
 
 	logger.SetStyles(styles())
 
-	return events.SlogHandler(slog.New(logger))
+	delegate := events.SlogHandler(slog.New(logger))
+	// ...
 }
 ```
+
+Given the registry, it also writes the configuration of each entity it sees
+created beneath the line reporting it, using `xcl.EncodeSavedEntity`. When its
+writer shows colour it asks xcl to colour that configuration with
+`xcl.Highlight`, so the example has no highlighting code of its own. See
+[Configuration text](/configuration-text/#highlighting).
 
 Every example sets it up in one line, writing to standard error at the level
 named by `XCL_LOG_LEVEL`, one of `debug`, `info`, `warn` or `error`, and info
