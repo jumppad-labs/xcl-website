@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/Shell.astro
 title: "Configuration only example - xcl"
-description: "A Kubernetes-like deployment parsed into Go types: nested blocks, repeated blocks and resources linked to each other by reference. No plugins, no providers."
+description: "A Kubernetes-like configuration read into Go types and used: the program follows the links between ingress, service and deployment and reports where each ingress path sends traffic. No plugins, no providers."
 ---
 import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
@@ -10,42 +10,62 @@ import Button from "../../components/Button.astro";
 
 <Hero
   heading="Example: configuration only"
-  sub="A Kubernetes-like deployment parsed into Go types. Nested blocks, repeated blocks and resources linked to each other by reference, with no plugin and no provider."
+  sub="A Kubernetes-like configuration read into Go types and reported as ingress routes. Nested blocks, repeated blocks and resources linked to each other by reference, with no plugin and no provider."
 />
 
 <Prose>
 
 Plenty of configuration only needs to be read. Nothing is created in the
-outside world, you just want the values, with references, variables and
-modules resolved, as ordinary Go structs.
+outside world, the application wants the values, with references, variables
+and modules resolved, as ordinary Go structs, and then acts on them.
 
-That is what this example shows. The block types are plain Go types
-registered on the plugin registry with `RegisterType`. xcl decodes each block
-into your type, resolves every reference in dependency order, and never calls
-a provider. A registered type needs nothing else: no plugin, no provider, no
+That is what this example is: a small program that reads its configuration
+into its own types and uses it. The block types are plain Go types registered
+on the plugin registry with `RegisterType`. xcl decodes each block into your
+type, resolves every reference in dependency order, and never calls a
+provider. A registered type needs nothing else: no plugin, no provider, no
 schema to write by hand.
 
 The configuration is a small Kubernetes-like deployment, with the names a
 Kubernetes user would recognise rather than a literal translation of a
-manifest. The source is in
-[`example/configonly`](https://github.com/jumppad-labs/xcl/tree/main/example/configonly).
+manifest. The program follows the links between its ingress, service and
+deployment and prints, for every ingress path, where the traffic ends up. The
+source is in
+[`example/configonly`](https://github.com/jumppad-labs/xcl/tree/main/example/configonly),
+a Go module of its own that can be copied out of the repository and built
+against a published xcl.
 
 ## The Go types
 
 A block type is a struct embedding `types.ResourceBase`, which carries the
 common block metadata and the `depends_on` and `disabled` attributes.
 Anything nested inside a block is a plain struct: a block that appears once
-is a pointer, a block that repeats is a slice.
+is a pointer, a block that repeats is a slice. The secret's data is a
+[sensitive value](/sensitive-values/), so it is masked in output and events
+and encrypted in state.
 
 ```go title="example/configonly/resources/resources.go"
 // ConfigMap defines the block type `config_map`, a bag of values the
 // deployment reads. A map attribute holds values whose names are not known
 // ahead of time, and a single value can be read from it with
-// `resource.config_map.api.data.db_host`.
+// `config_map.api.data.db_host`.
 type ConfigMap struct {
 	types.ResourceBase `xcl:",remain"`
 
 	Data map[string]string `xcl:"data" json:"data"`
+}
+
+// Secret defines the block type `secret`, values that must not be seen. Data
+// is a types.Sensitive, so it is masked in output and events and encrypted in
+// state when the state has a key, and only Reveal returns the real values.
+//
+// As in Kubernetes, nothing else holds a secret's values: a container reads
+// one through a secret_key_ref naming the secret and the key, which are plain
+// strings, so the deployment never becomes sensitive itself.
+type Secret struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Data types.Sensitive[map[string]string] `xcl:"data" json:"data"`
 }
 
 // Deployment defines the block type `deployment`. It holds repeated container
@@ -68,7 +88,7 @@ type Deployment struct {
 // resource of its own, so it does not embed types.ResourceBase and can not be
 // referenced by its own id, its fields are reached through the deployment
 // that holds it, i.e.
-// `resource.deployment.api.container[0].port[0].container_port`.
+// `deployment.api.container[0].port[0].container_port`.
 type Container struct {
 	Name  string `xcl:"name" json:"name"`
 	Image string `xcl:"image" json:"image"`
@@ -91,6 +111,13 @@ names the deployment by its id and reads the port out of it, and the two can
 not drift apart.
 
 ```go title="example/configonly/resources/resources.go"
+// Service defines the block type `service`, it routes traffic to the
+// containers of a deployment.
+//
+// Kubernetes matches a service to its pods with a label selector because a
+// manifest has no way to point at another object. Configuration parsed by xcl
+// does, so the service names the deployment by its id and reads the port out
+// of it, and the two can not drift apart.
 type Service struct {
 	types.ResourceBase `xcl:",remain"`
 
@@ -98,15 +125,38 @@ type Service struct {
 	Port       int    `xcl:"port" json:"port"`
 	TargetPort int    `xcl:"target_port" json:"target_port"`
 }
+
+// Ingress defines the block type `ingress`, it routes a host to a service
+type Ingress struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Host  string `xcl:"host" json:"host"`
+	Rules []Rule `xcl:"rule,block" json:"rule"`
+}
+
+// Rule is a nested `rule` block of an ingress, sending one path to one
+// service, named by its id
+type Rule struct {
+	Path    string `xcl:"path" json:"path"`
+	Service string `xcl:"service" json:"service"`
+	Port    int    `xcl:"port" json:"port"`
+}
 ```
 
 ## The configuration
 
-Variables, a map attribute, blocks nested inside blocks, blocks that repeat,
-and references between resources, including a reference into a repeated block
-by position.
+Three files in one directory make one configuration: variables, a map
+attribute, blocks nested inside blocks, blocks that repeat, and references
+between resources, including a reference into a repeated block by position.
 
-```hcl title="example/configonly/config/main.xcl"
+```hcl title="example/configonly/config/deployment.xcl"
+# The configuration only example: a small Kubernetes-like deployment, parsed
+# into the Go types in ../resources. Nothing here is applied to a cluster, the
+# blocks are decoded into Go structs and the references between them are
+# resolved.
+#
+# Variables can be overridden with environment variables prefixed HCL_VAR_,
+# i.e. HCL_VAR_image_tag.
 variable "image_tag" {
   default = "1.2.0"
 }
@@ -117,14 +167,14 @@ variable "replicas" {
 
 # config_map holds values whose names are not known to the Go type, its data
 # is a map. The deployment reads single values out of it below.
-resource "config_map" "api" {
+config_map "api" {
   data = {
     db_host   = "postgres.default.svc"
     log_level = "info"
   }
 }
 
-resource "deployment" "api" {
+deployment "api" {
   replicas = variable.replicas
 
   # container is a repeated block, this deployment has two of them
@@ -146,12 +196,25 @@ resource "deployment" "api" {
     # env values are read from the config map, so they are declared once
     env {
       name  = "DB_HOST"
-      value = resource.config_map.api.data.db_host
+      value = config_map.api.data.db_host
     }
 
     env {
       name  = "LOG_LEVEL"
-      value = resource.config_map.api.data.log_level
+      value = config_map.api.data.log_level
+    }
+
+    # the password comes from a secret, the deployment holds only the
+    # secret's name and the key to read, never the password itself
+    env {
+      name = "DB_PASSWORD"
+
+      value_from {
+        secret_key_ref {
+          name = secret.db.meta.name
+          key  = "password"
+        }
+      }
     }
 
     # resources nests two more blocks of its own
@@ -185,131 +248,335 @@ resource "deployment" "api" {
 
   volume {
     name       = "config"
-    config_map = resource.config_map.api.meta.id
+    config_map = config_map.api.meta.id
   }
 }
+```
 
-# The service is linked to the deployment by its id. The port it sends traffic
-# to is read out of the deployment as well. A repeated block is referenced by
-# position, container[0] is the first container block.
-resource "service" "api" {
-  deployment  = resource.deployment.api.meta.id
+```hcl title="example/configonly/config/ingress.xcl"
+# The service is linked to the deployment by its id. Kubernetes would match
+# the two with a label selector, because a manifest can not point at another
+# object; here the reference does it directly.
+#
+# The port it sends traffic to is read out of the deployment as well. A
+# repeated block is referenced by position, container[0] is the first
+# container block.
+service "api" {
+  deployment  = deployment.api.meta.id
   port        = 80
-  target_port = resource.deployment.api.container[0].port[0].container_port
+  target_port = deployment.api.container[0].port[0].container_port
 }
 
-resource "ingress" "api" {
+# The ingress is linked to the service the same way, by id and port.
+# References order the blocks too, so the service is always parsed before the
+# ingress that reads it.
+ingress "api" {
   host = "api.example.com"
 
   rule {
     path    = "/"
-    service = resource.service.api.meta.id
-    port    = resource.service.api.port
+    service = service.api.meta.id
+    port    = service.api.port
   }
 }
 
 output "api_url" {
-  value = "https://${resource.ingress.api.host}"
+  value = "https://${ingress.api.host}"
+}
+```
+
+```hcl title="example/configonly/config/secret.xcl"
+# The secret holds the database password. Its data is sensitive, so it is
+# masked in output and events and encrypted in state. The password is read
+# from the environment when the configuration is parsed, so it never appears
+# in this file.
+secret "db" {
+  data = {
+    password = env("DB_PASSWORD")
+  }
 }
 ```
 
 ## The program
 
-Register each Go type under the block type name used in configuration, give
-the config a state store, and apply. `run` takes the receiver for xcl's
-[events](/events/) as `handler`, and `main` passes it the example's pretty
-terminal receiver in one line:
+The program does three things: load the configuration into a struct of its
+own, work out the routes, and print them.
+
+`loadConfig` registers each Go type under the block type name used in
+configuration, applies the configuration and gathers it with one `Decode`
+call. Each slice field receives every block of its type, in the order the
+blocks were written, so the configuration can declare as many of each as it
+needs. The struct holds only what the program reads; reading a new block type
+is one new field, with no lookup code.
 
 ```go title="example/configonly/main.go"
-r := registry.NewPluginRegistry()
+// appConfig is the application's view of the configuration, filled by one
+// Decode call. A slice field receives every block of its registered type, in
+// the order the blocks were written, so the configuration can declare as many
+// of each as it needs. It holds only what the program reads, reading a new
+// block type needs only a new field.
+type appConfig struct {
+	Deployments []*resources.Deployment
+	Services    []*resources.Service
+	Ingresses   []*resources.Ingress
+}
 
-_, err = run(os.Stdout, prettylog.Handler(os.Stderr, prettylog.LevelFromEnv(), r), r, dir, stateDir)
-```
-
-The registry is built in `main` so the receiver can share it: it is what types
-the entity an event carries. xcl writes nothing unless a receiver is set.
-
-```go title="example/configonly/main.go"
-func run(out io.Writer, handler xcl.EventHandler, r *registry.PluginRegistry, dir string, stateDir string) ([]any, error) {
-
+// loadConfig registers the example's block types on r, applies the
+// configuration in dir with options added to the registry, and gathers it into
+// an appConfig.
+func loadConfig(dir string, r *registry.PluginRegistry, options ...xcl.ConfigOption) (*appConfig, error) {
 	// Register each Go type under the block type name used in configuration.
 	// A registered type needs nothing else: no plugin, no provider, no schema
-	// to write by hand.
-	if err := r.RegisterType(&resources.ConfigMap{}, "resource", "config_map"); err != nil {
+	// to write by hand. Every type the configuration declares must be
+	// registered, even the ones the program does not read.
+	if err := r.RegisterType(&resources.ConfigMap{}, "config_map"); err != nil {
 		return nil, err
 	}
 
-	if err := r.RegisterType(&resources.Deployment{}, "resource", "deployment"); err != nil {
+	if err := r.RegisterType(&resources.Secret{}, "secret"); err != nil {
 		return nil, err
 	}
 
-	if err := r.RegisterType(&resources.Service{}, "resource", "service"); err != nil {
+	if err := r.RegisterType(&resources.Deployment{}, "deployment"); err != nil {
 		return nil, err
 	}
 
-	if err := r.RegisterType(&resources.Ingress{}, "resource", "ingress"); err != nil {
+	if err := r.RegisterType(&resources.Service{}, "service"); err != nil {
 		return nil, err
 	}
 
-	c, err := xcl.NewConfig(
-		xcl.WithPluginRegistry(r),
-		// Keep the state in a file, Destroy works from it alone
-		xcl.WithStatePath(stateDir),
-		xcl.WithEventHandler(handler),
-		// events carry nothing by default, this asks for each resource as
-		// state records it, which is what the receiver turns back into
-		// configuration text
-		xcl.WithEventData(xcl.EventDataProcessed),
-	)
+	if err := r.RegisterType(&resources.Ingress{}, "ingress"); err != nil {
+		return nil, err
+	}
+
+	c, err := xcl.NewConfig(append([]xcl.ConfigOption{xcl.WithPluginRegistry(r)}, options...)...)
 	if err != nil {
 		return nil, err
 	}
 
 	if err := c.Apply(dir); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loading configuration from %s: %w", dir, err)
 	}
+
+	// gather the configuration into the application's own struct, Decode is
+	// an ordinary method so this works on every supported Go version
+	var cfg appConfig
+	if err := c.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("reading configuration from %s: %w", dir, err)
+	}
+
+	return &cfg, nil
+}
 ```
 
-One `Decode` call then gathers the whole configuration into a struct of the
-program's own. Each slice field receives every block of its type, in the order
-the blocks were written, and each pointer field receives the one block of its
-type. Reading a new block type is one new field, with no lookup code.
-`Find` is still there for a single entity by its address.
+`loadConfig` takes its options from the caller. `main` keeps the state,
+encrypted with a fresh key, in a temporary directory, and sends xcl's
+[events](/events/) to the example's pretty terminal receiver. A test passes no
+options at all and loads the configuration the same way.
 
 ```go title="example/configonly/main.go"
-type appConfig struct {
-	ConfigMaps  []*resources.ConfigMap
-	Deployments []*resources.Deployment
-	Service     *resources.Service
-	Ingress     *resources.Ingress
+cfg, err := loadConfig(dir, r,
+	// Keep the state in a file
+	xcl.WithStatePath(stateDir),
+	// Encrypt sensitive values in the state, without a mask they are
+	// written in plain text and xcl warns about it
+	xcl.WithStateMask(masker),
+	// Every event xcl produces goes to the pretty receiver on stderr, so
+	// stdout holds only the routes
+	xcl.WithEventHandler(prettylog.Handler(os.Stderr, prettylog.LevelFromEnv(), r)),
+	// events carry nothing by default, this asks for each resource as
+	// state records it, which is what the receiver turns back into
+	// configuration text. Sensitive fields are redacted in events.
+	xcl.WithEventData(xcl.EventDataProcessed),
+)
+if err != nil {
+	return err
 }
-
-var cfg appConfig
-if err := c.Decode(&cfg); err != nil {
-	return nil, err
-}
-
-printDeployments(out, cfg.Deployments)
 ```
 
-The blocks come back as your own Go types, the configuration's own instances,
-and everything nested inside them is an ordinary Go struct or slice.
+The registry is built by the caller so the receiver can share it: it is what
+types the entity an event carries. xcl writes nothing unless a receiver is
+set.
 
-```go title="example/configonly/main.go"
-for _, d := range deployments {
-	for _, container := range d.Containers {
+`ingressRoutes` is the program's business logic, plain Go over the decoded
+types with no xcl calls. Because the configuration links the blocks by id, each
+hop is a lookup:
+
+```go title="example/configonly/routes.go"
+// ingressRoutes works out a Route for every rule of every ingress, in the
+// order they are declared.
+//
+// The configuration links the blocks by id: a rule names its service, and a
+// service names its deployment, so each hop is a lookup rather than a match on
+// labels as Kubernetes would do. The last hop is the service's target port,
+// which is found on the first container port, in declaration order, that
+// listens on it.
+//
+// A rule whose service, deployment or target port can not be found is an
+// error naming the ingress and path, a route is never silently left out.
+func ingressRoutes(cfg *appConfig) ([]Route, error) {
+	services := map[string]*resources.Service{}
+	for _, service := range cfg.Services {
+		services[service.Meta.ID] = service
+	}
+
+	deployments := map[string]*resources.Deployment{}
+	for _, deployment := range cfg.Deployments {
+		deployments[deployment.Meta.ID] = deployment
+	}
+
+	routes := []Route{}
+
+	for _, ingress := range cfg.Ingresses {
+		for _, rule := range ingress.Rules {
+			service, ok := services[rule.Service]
+			if !ok {
+				return nil, fmt.Errorf("ingress %s path %s: service %q not found", ingress.Meta.ID, rule.Path, rule.Service)
+			}
+
+			deployment, ok := deployments[service.Deployment]
+			if !ok {
+				return nil, fmt.Errorf("ingress %s path %s: deployment %q of service %s not found", ingress.Meta.ID, rule.Path, service.Deployment, service.Meta.ID)
+			}
+
+			container, port, ok := findContainerPort(deployment, service.TargetPort)
+			if !ok {
+				return nil, fmt.Errorf("ingress %s path %s: no container in %s exposes port %d", ingress.Meta.ID, rule.Path, deployment.Meta.ID, service.TargetPort)
+			}
+
+			routes = append(routes, Route{
+				Host:        ingress.Host,
+				Path:        rule.Path,
+				Service:     service.Meta.ID,
+				ServicePort: rule.Port,
+				Deployment:  deployment.Meta.ID,
+				Container:   container.Name,
+				PortName:    port.Name,
+				Port:        port.ContainerPort,
+			})
+		}
+	}
+
+	return routes, nil
+}
+
+// findContainerPort returns the first container of deployment, and its port,
+// that listens on containerPort. ok is false when no container does.
+func findContainerPort(deployment *resources.Deployment, containerPort int) (container resources.Container, port resources.Port, ok bool) {
+	for _, container := range deployment.Containers {
 		for _, port := range container.Ports {
-			fmt.Fprintf(out, "      port %s container_port=%d\n", port.Name, port.ContainerPort)
-		}
-
-		// A block that appears once is a pointer, nil when the
-		// configuration leaves it out
-		if container.Resources != nil {
-			fmt.Fprintf(out, "      limits cpu=%s memory=%s\n", container.Resources.Limits.CPU, container.Resources.Limits.Memory)
+			if port.ContainerPort == containerPort {
+				return container, port, true
+			}
 		}
 	}
+
+	return resources.Container{}, resources.Port{}, false
 }
 ```
+
+`main` prints one line per route:
+
+```go title="example/configonly/main.go"
+routes, err := ingressRoutes(cfg)
+if err != nil {
+	return err
+}
+
+for _, route := range routes {
+	fmt.Println(route)
+}
+```
+
+## Testing it
+
+The route logic is what an application author would test, and it is tested
+the way they would test their own configuration-driven code: against a test
+configuration kept beside the code, separate from the one the program ships
+with, loaded through the same `loadConfig`. The test configuration has the
+example's shape with different values, two services and an ingress with two
+paths, so a passing test proves the links are followed rather than matching
+the defaults.
+
+```hcl title="example/configonly/testdata/routes/ingress.xcl"
+service "web" {
+  deployment  = deployment.web.meta.id
+  port        = 80
+  target_port = deployment.web.container[0].port[0].container_port
+}
+
+service "api" {
+  deployment  = deployment.api.meta.id
+  port        = 9090
+  target_port = deployment.api.container[1].port[0].container_port
+}
+
+ingress "shop" {
+  host = "shop.test"
+
+  rule {
+    path    = "/"
+    service = service.web.meta.id
+    port    = service.web.port
+  }
+
+  rule {
+    path    = "/api"
+    service = service.api.meta.id
+    port    = service.api.port
+  }
+}
+```
+
+```go title="example/configonly/routes_test.go"
+func TestIngressRoutesReportsEveryIngressPath(t *testing.T) {
+	cfg := loadTestConfig(t, "routes")
+
+	routes, err := ingressRoutes(cfg)
+	require.NoError(t, err)
+
+	require.Equal(t, []Route{
+		{
+			Host:        "shop.test",
+			Path:        "/",
+			Service:     "service.web",
+			ServicePort: 80,
+			Deployment:  "deployment.web",
+			Container:   "web",
+			PortName:    "http",
+			Port:        3000,
+		},
+		{
+			Host:        "shop.test",
+			Path:        "/api",
+			Service:     "service.api",
+			ServicePort: 9090,
+			Deployment:  "deployment.api",
+			Container:   "api",
+			PortName:    "grpc",
+			Port:        7000,
+		},
+	}, routes)
+}
+```
+
+Each way a link can fail to resolve, an unknown service, an unknown deployment
+or a target port no container exposes, has a small configuration and a test of
+its own:
+
+```go title="example/configonly/routes_test.go"
+func TestIngressRoutesFailsForUnknownService(t *testing.T) {
+	cfg := loadTestConfig(t, "unknown_service")
+
+	_, err := ingressRoutes(cfg)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "ingress ingress.shop path /")
+	require.ErrorContains(t, err, `service "service.missing" not found`)
+}
+```
+
+A smoke test builds the program and runs it against `./config`, checking it
+prints the default route.
 
 ## Run it
 
@@ -319,58 +586,55 @@ From the `example/configonly` directory:
 make run
 ```
 
-The events go to standard error, trimmed here to a few of each. Every step is logged at info, `core` is xcl
-itself, and each line names the resource and the file it came from. The
-level is read from `XCL_LOG_LEVEL` and defaults to info:
+The events go to standard error, trimmed here to a few of each. Every step is
+logged at info, `core` is xcl itself, and each line names the resource and the
+file it came from. The level is read from `XCL_LOG_LEVEL` and defaults to
+info. Each created resource is shown as configuration text, with the secret's
+data masked:
 
 ```text
-1:01PM INFO apply start source=core operation=apply phase=start
-1:01PM INFO parse success source=core operation=parse phase=success resource=resource.config_map.api type=config_map.api file=config/main.xcl
-1:01PM INFO parse success source=core operation=parse phase=success resource=resource.deployment.api type=deployment.api file=config/main.xcl
-1:01PM INFO create success source=core operation=create phase=success resource=resource.config_map.api type=config_map.api file=config/main.xcl
-1:01PM INFO create success source=core operation=create phase=success resource=resource.deployment.api type=deployment.api file=config/main.xcl
-1:01PM INFO create success source=core operation=create phase=success resource=resource.service.api type=service.api file=config/main.xcl
-1:01PM INFO create success source=core operation=create phase=success resource=resource.ingress.api type=ingress.api file=config/main.xcl
-1:01PM INFO apply success source=core operation=apply phase=success duration=11.970556ms
+3:25PM INFO apply start source=core operation=apply phase=start
+3:25PM INFO parse success source=core operation=parse phase=success resource=config_map.api type=config_map.api file=config/deployment.xcl
+3:25PM INFO parse success source=core operation=parse phase=success resource=deployment.api type=deployment.api file=config/deployment.xcl
+3:25PM INFO parse success source=core operation=parse phase=success resource=service.api type=service.api file=config/ingress.xcl
+3:25PM INFO parse success source=core operation=parse phase=success resource=secret.db type=secret.db file=config/secret.xcl
+3:25PM INFO create success source=core operation=create phase=success resource=secret.db type=secret.db file=config/secret.xcl
+  secret "db" {
+    data = "(sensitive)"
+  }
+3:25PM INFO create success source=core operation=create phase=success resource=service.api type=service.api file=config/ingress.xcl
+  service "api" {
+    deployment  = "deployment.api"
+    port        = 80
+    target_port = 8080
+  }
+3:25PM INFO create success source=core operation=create phase=success resource=ingress.api type=ingress.api file=config/ingress.xcl
+  ingress "api" {
+    host = "api.example.com"
+
+    rule {
+      path    = "/"
+      service = "service.api"
+      port    = 80
+    }
+  }
+3:25PM INFO apply success source=core operation=apply phase=success duration=6.934216ms
 ```
 
 No registered type has a provider, so each block goes straight to `create
 success` with no `start` in between. The program's own output, on standard
-output, is the parsed configuration:
+output, is one line per ingress path:
 
 ```text
-## Resources
-  variable.image_tag
-  variable.replicas
-  resource.config_map.api
-  resource.deployment.api
-  resource.service.api
-  resource.ingress.api
-  output.api_url
-## Deployments
-  resource.deployment.api replicas=3
-    container api image=ghcr.io/example/api:1.2.0
-      port http container_port=8080
-      port metrics container_port=9090
-      env DB_HOST=postgres.default.svc
-      env LOG_LEVEL=info
-      limits cpu=500m memory=512Mi
-      requests cpu=100m memory=128Mi
-      volume_mount config path=/etc/api
-    container proxy image=ghcr.io/example/proxy:0.4.1
-      port proxy container_port=8081
-    volume config config_map=resource.config_map.api
-## Service
-  resource.service.api deployment=resource.deployment.api port=80 target_port=8080
-## Ingress
-  resource.ingress.api host=api.example.com
-    rule path=/ service=resource.service.api port=80
-## Destroyed
-  0 resources remaining
+api.example.com/ -> service.api:80 -> deployment.api container api port http (8080)
 ```
 
 ## What to notice
 
+- **Routes follow ids.** The ingress names the service and the service names
+  the deployment, so the program finds where traffic goes with a lookup per
+  hop, and a link that can not be followed is an error naming the ingress and
+  path.
 - **Values are declared once.** The service's `target_port` is read out of
   the deployment's first container port, so changing the container port
   changes the service too. The environment variables come from the config
@@ -391,9 +655,8 @@ output, is the parsed configuration:
 </Prose>
 
 <CtaBanner
-  heading="Two more examples"
-  body="One configuration file with everything in it, or the full lifecycle with plugins."
+  heading="One more example"
+  body="The full lifecycle with plugins."
 >
-  <Button href="/examples/application-config/" label="Application config file →" variant="primary" large />
-  <Button href="/examples/plugins/" label="Plugins and the lifecycle →" variant="secondary" large />
+  <Button href="/examples/plugins/" label="Plugins and the lifecycle →" variant="primary" large />
 </CtaBanner>

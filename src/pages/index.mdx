@@ -19,7 +19,7 @@ import FeatureCard from "../components/FeatureCard.astro";
 >
   <Badge slot="badge" text="v2 · early development" variant="green" dot />
   <InstallBlock slot="install" command="go get github.com/jumppad-labs/xcl" />
-  <Button href="/examples/application-config/" label="See an example →" variant="primary" large />
+  <Button href="/examples/configuration-only/" label="See an example →" variant="primary" large />
   <Button href="https://github.com/jumppad-labs/xcl" label="View on GitHub" variant="secondary" large external />
 </Hero>
 
@@ -205,7 +205,7 @@ fmt.Println(db.Location, db.Port)
   </FeatureCard>
 </FeaturesGrid>
 
-<Section heading="Three examples" surface>
+<Section heading="Two examples" surface>
 
   The [examples](https://github.com/jumppad-labs/xcl/tree/main/example) in the
   repository each run on their own, with `make run`, and each show one way xcl
@@ -215,10 +215,8 @@ fmt.Println(db.Location, db.Port)
     in-process and one external over gRPC, whose providers create and destroy
     every resource in the configuration.
   - [Configuration only](/examples/configuration-only/): a Kubernetes-like
-    deployment parsed into Go types, with resources linked to each other by
-    reference. No plugins.
-  - [An application config file](/examples/application-config/): one file,
-    deeply nested, the kind of configuration usually written as JSON.
+    deployment read into Go types, with resources linked to each other by
+    reference, and reported as the route each ingress path takes. No plugins.
 
 </Section>
 
@@ -226,6 +224,6 @@ fmt.Println(db.Location, db.Port)
   heading="Start with an example"
   body="xcl is free and open source. Clone the repository and run any example with <code>make run</code>."
 >
-  <Button href="/examples/application-config/" label="An application config file →" variant="primary" large />
+  <Button href="/examples/configuration-only/" label="Configuration only →" variant="primary" large />
   <Button href="/examples/plugins/" label="Plugins and the lifecycle →" variant="secondary" large />
 </CtaBanner>
