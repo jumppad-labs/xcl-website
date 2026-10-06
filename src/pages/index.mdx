@@ -211,9 +211,11 @@ fmt.Println(db.Location, db.Port)
   repository each run on their own, with `make run`, and each show one way xcl
   is used.
 
-  - [Plugins and the lifecycle](/examples/plugins/): two plugins, one
-    in-process and one external over gRPC, whose providers create and destroy
-    every resource in the configuration.
+  - [Plugins and the lifecycle](/examples/plugins/): an external Docker
+    plugin, run over gRPC, that creates a real network and container, and an
+    in-process template plugin that renders a file from the container's
+    address. Their providers create everything on apply and remove it on
+    destroy.
   - [Configuration only](/examples/configuration-only/): a Kubernetes-like
     deployment read into Go types, with resources linked to each other by
     reference, and reported as the route each ingress path takes. No plugins.
