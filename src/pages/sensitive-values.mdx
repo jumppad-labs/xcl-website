@@ -26,23 +26,29 @@ the configuration is written.
 Give the field the type `types.Sensitive[T]`. That is the only change; the
 configuration sets it exactly as it would set a plain field:
 
-```go title="example/appconfig/resources/resources.go"
-type Database struct {
-	Driver   string `xcl:"driver" json:"driver"`
-	Host     string `xcl:"host" json:"host"`
-	Port     int    `xcl:"port" json:"port"`
-	Name     string `xcl:"name" json:"name"`
-	Username string `xcl:"username" json:"username"`
+```go title="example/configonly/resources/resources.go"
+// Secret defines the block type `secret`, values that must not be seen. Data
+// is a types.Sensitive, so it is masked in output and events and encrypted in
+// state when the state has a key, and only Reveal returns the real values.
+//
+// As in Kubernetes, nothing else holds a secret's values: a container reads
+// one through a secret_key_ref naming the secret and the key, which are plain
+// strings, so the deployment never becomes sensitive itself.
+type Secret struct {
+	types.ResourceBase `xcl:",remain"`
 
-	// Password is sensitive: printing, logging or marshalling it shows
-	// "(sensitive)", and the program reads the real value with Reveal only
-	// where it is used
-	Password types.Sensitive[string] `xcl:"password" json:"password"`
+	Data types.Sensitive[map[string]string] `xcl:"data" json:"data"`
 }
 ```
 
-```hcl title="example/appconfig/config/app.xcl"
-password = env("DB_PASSWORD")
+Here `T` is a map, so every value the secret holds is sensitive:
+
+```hcl title="example/configonly/config/secret.xcl"
+secret "db" {
+  data = {
+    password = env("DB_PASSWORD")
+  }
+}
 ```
 
 The same declaration works on the types a plugin provides. Plugin types may use
@@ -58,15 +64,15 @@ used, such as when building a connection string, and never print or log what
 it returns: once revealed, a value is an ordinary value and is no longer
 protected.
 
-```go title="example/appconfig/main.go"
+```go
 // databaseURL builds the connection string for the database. It holds the real
 // password, read with Reveal, so it must not be printed or logged.
-func databaseURL(db *resources.Database) string {
+func databaseURL(secret *resources.Secret) string {
 	connection := url.URL{
-		Scheme: db.Driver,
-		User:   url.UserPassword(db.Username, db.Password.Reveal()),
-		Host:   net.JoinHostPort(db.Host, strconv.Itoa(db.Port)),
-		Path:   "/" + db.Name,
+		Scheme: "postgres",
+		User:   url.UserPassword("app", secret.Data.Reveal()["password"]),
+		Host:   "postgres.default.svc:5432",
+		Path:   "/app",
 	}
 
 	return connection.String()
@@ -112,13 +118,11 @@ _, err := xcl.Find[PlainDatabase](c, "resource.database.main")
 ## Your own JSON and templates show the marker
 
 A sensitive value formats as `(sensitive)` everywhere Go formats it: every
-`fmt` verb, `log/slog`, `encoding/json` and `text/template`. The application
-config example prints its configuration as JSON with `json.MarshalIndent`, and
-the password comes out as the marker:
+`fmt` verb, `log/slog`, `encoding/json` and `text/template`. Marshalling the
+secret above with `json.MarshalIndent` writes the marker in place of its data:
 
 ```json
-"username": "app",
-"password": "(sensitive)",
+"data": "(sensitive)"
 ```
 
 To put the real value in your own output, unwrap it with `.Reveal()` first,
@@ -148,8 +152,8 @@ State keeps the real value, in plain text unless you give xcl a key: see
 
 <CtaBanner
   heading="See it run"
-  body="The application config example declares its database password sensitive and prints no secret."
+  body="The configuration example declares its database password sensitive, encrypts it in state and prints no secret."
 >
-  <Button href="/examples/application-config/" label="Application config example →" variant="primary" large />
+  <Button href="/examples/configuration-only/" label="Configuration example →" variant="primary" large />
   <Button href="/events/" label="Events and logging →" variant="secondary" large />
 </CtaBanner>
