@@ -1,0 +1,234 @@
+---
+layout: ../layouts/Shell.astro
+title: "Diffs - xcl"
+description: "See what an apply would do before you run it: which resources would be created, updated, replaced or deleted, which values change, and a readable, optionally coloured rendering of it all."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+
+<Hero
+  heading="Diffs"
+  sub="See what an apply would do before you run it: every resource it would create, update, replace or delete, and every value that would change."
+/>
+
+<Prose>
+
+A diff compares a configuration with the state its last apply saved, and
+reports what applying that configuration would do. Running one does nothing:
+no resource is created, changed or destroyed, and no state is saved. Each
+resource that is still configured is checked through its provider's read and
+change checks, as an apply would do, so a diff also shows changes made to the
+real infrastructure outside xcl.
+
+## Running a diff
+
+`Config.Diff` takes the same paths as `Config.Apply` and fails in the same
+cases, such as a configuration that does not parse or validate:
+
+```go title="main.go"
+import "github.com/jumppad-labs/xcl/diff"
+
+d, err := c.Diff([]string{"./config"})
+if err != nil {
+	return err
+}
+
+if d.Changed() == 0 {
+	fmt.Println("nothing to do")
+	return nil
+}
+
+fmt.Print(string(diff.Render(d)))
+```
+
+The result is plain data. `d.Summary` counts the resources for each action and
+the ones that would stay unchanged, and `d.Changed()` adds up the four actions.
+`d.Resources` lists every resource an apply would change, sorted by address,
+and each one carries its `Changes`, one for each configured value that would
+change:
+
+```go
+for _, resource := range d.Resources {
+	fmt.Println(resource.Address, resource.Action)
+
+	for _, change := range resource.Changes {
+		fmt.Println("  ", change.Path, change.Before, change.After)
+	}
+}
+```
+
+A change's `Path` locates the value within the resource, such as `image`,
+`ports[0].host` or `env["LOG_LEVEL"]`. `Before` is the saved value and `After`
+the configured one. An added value has no `Before` and a removed one has no
+`After`.
+
+## What each action means
+
+Each resource an apply would change gets exactly one action:
+
+| Action | When |
+|---|---|
+| `create` | It is in the configuration but not in the saved state, or its provider reports that the real resource no longer exists. |
+| `update` | Its provider reports a change, or one of its values is only known after apply. |
+| `replace` | Its last apply failed, so an apply destroys it and creates it again, whether or not its configuration changed. |
+| `delete` | It is in the saved state but no longer in the configuration. |
+
+A resource whose provider reports no change is unchanged. It is counted in
+the summary but not listed. Only resources an apply hands to a provider take
+part: variables, outputs, modules and disabled blocks are neither listed nor
+counted.
+
+An update can have no changes. That happens when the provider reports that the
+real resource differs from what was saved, but no configured value changed:
+something changed it outside xcl, and an apply would update it.
+
+## Known after apply
+
+Some values only exist once an apply has run, such as an id or an address a
+provider assigns when it creates a resource. A value that depends on one is
+marked `Unknown`, with no `After`. A resource that is already saved and
+depends on such a value is reported as an update, since whether an apply would
+really change it cannot be known until then.
+
+A diff assumes that updating a resource can change the values its provider
+fills in. So a resource that refers to a value of a resource being updated is
+also reported as an update, with that value known after apply, just as it
+would be for a resource being created.
+
+## Sensitive values
+
+A change to a sensitive value is reported with `Sensitive` set and with
+neither its old nor its new value, so the secret never reaches the result, its
+JSON, or the rendering. The change is still listed, because knowing that a
+secret changed is useful in itself.
+
+Pass `diff.RevealSensitive()` to include both values:
+
+```go
+d, err := c.Diff([]string{"./config"}, diff.RevealSensitive())
+```
+
+The result then holds the secrets in plain form, and so does anything made
+from it, so print or store it with the same care as the secrets themselves.
+See [Sensitive values](/sensitive-values/) for marking a field sensitive.
+
+## Reading the rendered output
+
+`diff.Render` turns a result into text in the style of a git diff, ready to
+print or log. This result has one resource for each action:
+
+```text
+  # resource.container.api will be updated
+  ~ resource "container" "api" {
+      ~ ports[0].host      = 8080 -> 9090
+      + ports[2]           = { host = 443, local = 8443 }
+      ~ env["DB_PASSWORD"] = (sensitive value)
+    }
+
+  # resource.container.cache changed outside xcl and will be updated
+  ~ resource "container" "cache" {}
+
+  # resource.container.web will be created
+  + resource "container" "web" {
+      + image   = "nginx"
+      + db_host = (known after apply)
+    }
+
+  # resource.network.app will be replaced, its last apply failed
+-/+ resource "network" "app" {}
+
+  # resource.postgres.old will be deleted
+  - resource "postgres" "old" {}
+
+Diff: 1 to create, 2 to update, 1 to replace, 1 to delete, 4 unchanged.
+```
+
+Each resource starts with a comment saying what an apply would do with it,
+followed by its block header, marked with the action. Inside the block there
+is one line for each change, with the `=` signs lined up. Resources appear in
+the result's order, which is sorted by address. A resource with no changes is
+written as a header with an empty body.
+
+| Marker | Meaning |
+|---|---|
+| `+` | a resource that would be created, or a value that would be added |
+| `-` | a resource that would be deleted, or a value that would be removed |
+| `~` | a resource that would be updated, or a value that would change, written as `before -> after` |
+| `-/+` | a resource that would be replaced |
+
+A value only known once an apply has run is written as `(known after apply)`.
+When it replaces a saved value, the line shows both, as
+`"old" -> (known after apply)`. A changed sensitive value is written as
+`(sensitive value)`. Its values appear only when the result holds them, which
+happens only when the diff ran with `diff.RevealSensitive()`.
+
+The last line sums up the diff. When nothing would change, it is the only
+line:
+
+```text
+Diff: no changes, 9 unchanged.
+```
+
+## Colour
+
+The rendering is plain text with no colour codes unless you ask for colour.
+Pass `diff.Highlight` the same renderer you use to
+[highlight configuration text](/configuration-text/#highlighting):
+
+```go
+import "github.com/jumppad-labs/xcl/highlight"
+
+renderer, err := highlight.NewANSIRenderer()
+if err != nil {
+	return err
+}
+
+fmt.Print(string(diff.Render(d, diff.Highlight(renderer))))
+```
+
+Added lines use the theme's inserted colour, removed ones its deleted colour,
+and changed and replaced ones its changed colour. Block headers and values are
+coloured as configuration. With no theme, the terminal renderer uses the
+terminal's standard green, red and yellow. Given a VS Code colour theme with
+`highlight.WithThemeFile`, it uses the colours that theme gives diffs. A theme
+that sets no diff colours leaves the markers in the terminal's default colour.
+
+xcl never checks whether output is a terminal, so whether to ask for colour is
+your decision. Removing the colour codes gives back exactly the plain
+rendering, and sensitive values are hidden the same way in both.
+
+A renderer of your own sees the markers and paths labelled
+`highlight.ScopeInserted`, `highlight.ScopeDeleted` and
+`highlight.ScopeChanged`, comment lines labelled as comments, and headers and
+values labelled as configuration text. Every other piece is passed with an
+empty scope, so a renderer that escapes text sees every byte.
+
+## The JSON form
+
+The result is also the machine-readable form of a diff. `json.Marshal(d)`
+writes the summary and the resources with their changes, each path in its
+written form, such as `"ports[0].host"`. Values that are absent, such as the
+values of a sensitive change that was not revealed, are left out:
+
+```json
+{
+  "summary": { "create": 1, "update": 0, "replace": 0, "delete": 0, "unchanged": 4 },
+  "resources": [
+    { "address": "resource.container.web", "action": "create",
+      "changes": [ { "path": "image", "after": "nginx" },
+                   { "path": "db_host", "unknown": true } ] }
+  ]
+}
+```
+
+</Prose>
+
+<CtaBanner
+  heading="Keep secrets out of your output"
+  body="A diff hides sensitive values just like logs, events and configuration text do."
+>
+  <Button href="/sensitive-values/" label="Sensitive values →" variant="primary" large />
+  <Button href="/configuration-text/" label="Configuration text →" variant="secondary" large />
+</CtaBanner>

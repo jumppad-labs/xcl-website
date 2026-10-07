@@ -141,6 +141,9 @@ knowing that it is then unprotected.
   value.
 - **The resource printer** shows the marker in every format.
   `logger.WithRevealSensitive(true)` shows real values.
+- **Diffs** from `Config.Diff` report that a sensitive value changed without
+  either value, and `diff.Render` shows `(sensitive value)`. Pass
+  `diff.RevealSensitive()` to include both values. See [Diffs](/diff/).
 
 A value read back from event data has no real value to show, so it is written
 as the marker even when revealing is asked for.
