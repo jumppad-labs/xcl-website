@@ -140,6 +140,7 @@ The operations and phases are defined as constants in the `events` package.
 | Operation | What it covers |
 |---|---|
 | `validate`, `apply`, `destroy` | a whole call to `Validate`, `Apply` or `Destroy` |
+| `load_state` | a whole call to `Load`, reading the saved state |
 | `parse` | one block as it is read, with the file it came from |
 | `create`, `read`, `changed`, `update`, `destroy` | one provider call for one resource |
 | `discover` | searching the directories given to `DiscoverPlugins` |

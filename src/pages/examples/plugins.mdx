@@ -106,7 +106,7 @@ their tags. They can not be set in configuration, only a provider can fill
 them in. Its nested `network` block is a slice of `NetworkAttachment`, one
 entry for each `network` block the container has:
 
-```go title="example/plugin/docker/container.go"
+```go title="example/plugin/plugins/docker/resources/container.go"
 // Container defines the block type docker "container", a Docker container
 // named after the block
 type Container struct {
@@ -143,7 +143,7 @@ type NetworkAttachment struct {
 }
 ```
 
-`docker.Network` is built the same way, with a `subnet` and a computed
+`resources.Network` is built the same way, with a `subnet` and a computed
 `docker_id`.
 
 ## The Docker plugin
@@ -155,7 +155,7 @@ client first and gives it to both providers. The logger `Init` receives is
 plugin scoped: it is for messages written outside a provider call, and xcl
 names the plugin as the source of everything it logs.
 
-```go title="example/plugin/docker/plugin.go"
+```go title="example/plugin/plugins/docker/plugin.go"
 // Init builds the Docker client from the environment and registers both block
 // types, each with a provider holding that client. Building the client does
 // not contact Docker, the providers do when they are called.
@@ -165,7 +165,7 @@ names the plugin as the source of everything it logs.
 // logs. During a call the providers log through plugins.Logger(ctx) instead,
 // which xcl binds to the resource and step being worked on.
 func (p *Plugin) Init(logger logger.Logger, state plugins.State) error {
-	client, err := NewClient()
+	dockerClient, err := client.New()
 	if err != nil {
 		return err
 	}
@@ -178,8 +178,8 @@ func (p *Plugin) Init(logger logger.Logger, state plugins.State) error {
 		state,
 		"docker",
 		"network",
-		&Network{},
-		&networkProvider{client: client},
+		&resources.Network{},
+		resources.NewNetworkProvider(dockerClient),
 	)
 	if err != nil {
 		return err
@@ -191,8 +191,8 @@ func (p *Plugin) Init(logger logger.Logger, state plugins.State) error {
 		state,
 		"docker",
 		"container",
-		&Container{},
-		&containerProvider{client: client},
+		&resources.Container{},
+		resources.NewContainerProvider(dockerClient),
 	)
 }
 ```
@@ -200,14 +200,17 @@ func (p *Plugin) Init(logger logger.Logger, state plugins.State) error {
 ### The providers
 
 The providers never use the Docker SDK client directly. They hold a
-`Client`, a narrow interface listing only the SDK methods they call, each
-with the SDK's own signature. The real `*client.Client` satisfies it with no
-adapter, and the unit tests use a mock generated from it:
+`client.Docker`, a narrow interface listing only the SDK methods they call,
+each with the SDK's own signature. It lives in its own package,
+`plugins/docker/client`, alongside `New`, which builds the real client from
+the environment, and `Ping`, which checks an engine answers. The real SDK
+`*client.Client` satisfies the interface with no adapter, and the unit tests
+use a mock generated from it:
 
-```go title="example/plugin/docker/client.go"
-// Client is the part of the Docker Engine SDK client the providers use. Each
+```go title="example/plugin/plugins/docker/client/client.go"
+// Docker is the part of the Docker Engine SDK client the providers use. Each
 // method has the same signature as the SDK's, so *client.Client satisfies it.
-type Client interface {
+type Docker interface {
 	Ping(ctx context.Context) (types.Ping, error)
 
 	NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
@@ -225,8 +228,8 @@ type Client interface {
 	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
 }
 
-// the real SDK client satisfies Client without an adapter
-var _ Client = (*client.Client)(nil)
+// the real SDK client satisfies Docker without an adapter
+var _ Docker = (*dockerclient.Client)(nil)
 ```
 
 A provider is typed on the block's Go type, so every method receives a
@@ -242,7 +245,7 @@ the step, so the provider passes only what it has to say. That works the same
 inside the plugin process as it does in-process: the host gives each message
 its call's resource and step.
 
-```go title="example/plugin/docker/network.go"
+```go title="example/plugin/plugins/docker/resources/network.go"
 // Create asks Docker for a labelled bridge network named after the block, and
 // records the ID Docker gives it
 func (p *networkProvider) Create(ctx context.Context, n *Network) (*Network, error) {
@@ -274,7 +277,7 @@ func (p *networkProvider) Create(ctx context.Context, n *Network) (*Network, err
 // removed
 func (p *networkProvider) Destroy(ctx context.Context, n *Network, force bool) error {
 	err := p.client.NetworkRemove(ctx, n.DockerID)
-	if err != nil && !client.IsErrNotFound(err) {
+	if err != nil && !dockerclient.IsErrNotFound(err) {
 		return fmt.Errorf("unable to remove network %s: %w", n.Meta.Name, err)
 	}
 
@@ -290,7 +293,7 @@ and inspects it for its address. The two computed fields are only set once
 everything has worked, and a container that was created but failed to start
 is removed again, so a failed `Create` leaves nothing behind:
 
-```go title="example/plugin/docker/container.go"
+```go title="example/plugin/plugins/docker/resources/container.go"
 // Create pulls the image when Docker does not have it, creates the container
 // on its first network, connects the rest, starts it and records its ID and
 // its address on the first network. When a step after the container was
@@ -338,7 +341,7 @@ func (p *containerProvider) Create(ctx context.Context, c *Container) (*Containe
 `startContainer` connects any further networks, starts the container and
 reads its address on the first network back from `ContainerInspect`:
 
-```go title="example/plugin/docker/container.go"
+```go title="example/plugin/plugins/docker/resources/container.go"
 // startContainer connects the created container to its further networks,
 // starts it and returns its address on its first network
 func (p *containerProvider) startContainer(ctx context.Context, c *Container, id string) (string, error) {
@@ -366,22 +369,20 @@ func (p *containerProvider) startContainer(ctx context.Context, c *Container, id
 ### The external binary
 
 The Docker plugin is ordinary Go, written against the same `plugins` package
-an in-process plugin uses. What makes it external is a `main` of its own,
-which serves the plugin over gRPC to the host that started the process.
-`make build` compiles it to `build/docker-plugin`:
+an in-process plugin uses. What makes it external is that it is a program of
+its own: `example/plugin/plugins/docker` is its `main` package, holding the
+plugin and a `main` that hands it to `plugins.Serve`, with the block types and
+providers in `plugins/docker/resources` and the Docker client in
+`plugins/docker/client`. The host program imports only
+`plugins/docker/resources`, to read the blocks it applied. xcl does the rest:
+the handshake with the host that started the process and the gRPC transport,
+so the plugin never imports go-plugin. `make build` compiles it to
+`build/docker-plugin`:
 
-```go title="example/plugin/cmd/docker-plugin/main.go"
+```go title="example/plugin/plugins/docker/main.go"
 // main serves the plugin to the host that started this process
 func main() {
-	plugin.Serve(&plugin.ServeConfig{
-		HandshakeConfig: plugins.HandshakeConfig,
-		Plugins: map[string]plugin.Plugin{
-			"plugin": &plugins.GRPCPlugin{
-				Impl: &docker.Plugin{},
-			},
-		},
-		GRPCServer: plugin.DefaultGRPCServer,
-	})
+	plugins.Serve(&Plugin{})
 }
 ```
 
@@ -393,7 +394,7 @@ written `template "welcome" {}`, with just a name, and addressed
 `template.welcome`. xcl names an in-process plugin after its Go type, so its
 log lines come from `TemplatePlugin`.
 
-```go title="example/plugin/template/plugin.go"
+```go title="example/plugin/plugins/template/plugin.go"
 // Init registers template with no subtype, so a block is written
 // template "<name>" {} and addressed template.<name>
 func (p *TemplatePlugin) Init(logger logger.Logger, state plugins.State) error {
@@ -416,7 +417,7 @@ including the address the Docker plugin computed in another process. It
 renders the template and writes the file, and its `Destroy` removes the file
 again:
 
-```go title="example/plugin/template/template.go"
+```go title="example/plugin/plugins/template/template.go"
 // Create renders the template with its variables and writes the result to the
 // destination
 func (p *provider) Create(ctx context.Context, t *Template) (*Template, error) {
@@ -435,7 +436,7 @@ func (p *provider) Create(ctx context.Context, t *Template) (*Template, error) {
 function uses, with the same `quote` and `trim` helpers, and executes it with
 the block's variables:
 
-```go title="example/plugin/template/template.go"
+```go title="example/plugin/plugins/template/template.go"
 // render renders t's source with its variables and writes it to its
 // destination, creating the destination's parent directories
 func render(t *Template) error {
@@ -477,42 +478,79 @@ func render(t *Template) error {
 
 ## The program
 
-The program checks that a Docker engine answers before it applies anything,
-so a missing engine is a clear error rather than a failed `Create`:
+The program is `xcl-docker`, a command line tool built on xcl the way a real
+one would be. It has four commands, and each is a separate run of the
+program:
+
+- `xcl-docker apply <path>` applies the configuration at `path`.
+- `xcl-docker status` prints what the saved state holds, as a tree.
+- `xcl-docker inspect <address>` prints one resource from the saved state as
+  configuration text.
+- `xcl-docker destroy` removes everything in the saved state.
+
+`apply` and `destroy` print nothing of their own: the events they write to
+standard error end with the operation's success or error. `status` and
+`inspect` print only their output.
+
+The runs share nothing but the state, saved in `./.xcl-docker` unless
+`--state` names another directory. `xcl-docker` finds the Docker plugin next
+to its own executable, where `make build` puts it, unless `--plugin` names
+another binary. The flags are parsed with the standard library's `flag`
+package, and `main` passes the command to one function per command:
 
 ```go title="example/plugin/main.go"
-	// The Docker plugin creates real containers, check an engine answers
-	// before applying anything
-	if err := docker.Ping(context.Background()); err != nil {
-		exit(err)
+	switch command {
+	case "apply":
+		if flags.NArg() != 1 {
+			fmt.Fprint(stderr, "apply needs the path of the configuration to apply\n\n"+usage)
+			return 2
+		}
+
+		err = applyCommand(stderr, flags.Arg(0), *dockerPlugin, *stateDir)
+	case "status":
+		err = statusCommand(stdout, *dockerPlugin, *stateDir)
+	case "inspect":
+		if flags.NArg() != 1 {
+			fmt.Fprint(stderr, "inspect needs the address of the resource to inspect\n\n"+usage)
+			return 2
+		}
+
+		err = inspectCommand(stdout, flags.Arg(0), *dockerPlugin, *stateDir)
+	case "destroy":
+		err = destroyCommand(stderr, *dockerPlugin, *stateDir)
+	default:
+		fmt.Fprintf(stderr, "unknown command %q\n\n%s", command, usage)
+		return 2
 	}
 ```
 
-Registering a plugin only records it. `RegisterPlugin` takes an in-process
-plugin and `RegisterPluginWithPath` an external plugin binary, and neither
-starts or checks anything. The plugins load at the start of the first
-`Apply`, once per registry, and each brings its own block types with it, so
-nothing else needs registering. A registered plugin that fails to load, such
-as a binary that was never built, fails that `Apply` with an error matching
-`xcl.ErrPluginLoad`, which the example turns into a hint.
+Every command builds its `Config` the same way. Registering a plugin only
+records it. `RegisterPlugin` takes an in-process plugin and
+`RegisterPluginWithPath` an external plugin binary, and neither starts or
+checks anything. The plugins load at the start of the first operation, once
+per registry, and each brings its own block types with it, so nothing else
+needs registering. The state is kept in a file, which is how one run picks
+up what the last one saved:
 
 ```go title="example/plugin/main.go"
-func apply(r *registry.PluginRegistry, handler xcl.EventHandler, configDir, dockerPlugin, stateDir string) (*xcl.Config, error) {
+func newConfig(r *registry.PluginRegistry, handler xcl.EventHandler, dockerPlugin, stateDir string) (*xcl.Config, error) {
 	// Register the in-process plugin, which provides every block type it
 	// registers in Init. Registering only records the plugin, it is loaded
-	// by the first Apply.
+	// by the first operation.
 	if err := r.RegisterPlugin(&template.TemplatePlugin{}); err != nil {
 		return nil, err
 	}
 
-	// Register the external plugin binary, it is started by the first Apply
+	// Register the external plugin binary, it is started by the first
+	// operation
 	if err := r.RegisterPluginWithPath(dockerPlugin); err != nil {
 		return nil, err
 	}
 
-	c, err := xcl.NewConfig(
+	return xcl.NewConfig(
 		xcl.WithPluginRegistry(r),
-		// Keep the state in a file, Destroy works from it alone
+		// Keep the state in a file, so each command, a separate run of the
+		// program, works from what the last one saved
 		xcl.WithStatePath(stateDir),
 		xcl.WithEventHandler(handler),
 		// events carry nothing by default, this asks for each resource as
@@ -520,80 +558,169 @@ func apply(r *registry.PluginRegistry, handler xcl.EventHandler, configDir, dock
 		// configuration text
 		xcl.WithEventData(xcl.EventDataProcessed),
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := c.Apply(configDir); err != nil {
-		// a plugin that fails to load is reported by the first operation,
-		// the likeliest cause is a Docker plugin that was not built
-		if errors.Is(err, xcl.ErrPluginLoad) {
-			return c, fmt.Errorf("%w, build it with `make build` in example/plugin", err)
-		}
-
-		return c, err
-	}
-
-	return c, nil
 }
 ```
 
-`apply` takes the receiver for xcl's [events](/events/) as `handler`. `main`
-passes it the example's pretty terminal receiver in one line, writing to
-standard error at the level in `XCL_LOG_LEVEL`, info by default. The receiver
-shares the registry, which is how it shows each resource's
-[configuration](/configuration-text/) as it is created:
+`handler` is the receiver for xcl's [events](/events/). Each command passes
+it the example's pretty terminal receiver, writing to standard error at the
+level in `XCL_LOG_LEVEL`, info by default. The receiver shares the registry,
+which is how it shows each resource's
+[configuration](/configuration-text/) as it is created.
+
+`apply` checks that a Docker engine answers before it applies anything, so a
+missing engine is a clear error rather than a failed `Create`. Nothing stops
+the Docker plugin: xcl starts its process for each operation and stops it
+when the operation is done:
 
 ```go title="example/plugin/main.go"
+func applyCommand(stderr io.Writer, configDir, dockerPlugin, stateDir string) error {
+	// The Docker plugin creates real containers, check an engine answers
+	// before applying anything
+	if err := client.Ping(context.Background()); err != nil {
+		return err
+	}
+
 	// the registry is built here so that the event receiver can share it: it
 	// is what types the entity an event carries, which is how the receiver
 	// shows each resource's configuration as it is created
 	r := registry.NewPluginRegistry()
 
-	c, err := apply(r, prettylog.Handler(os.Stderr, prettylog.LevelFromEnv(), r), configDir, dockerPlugin, stateDir)
+	c, err := newConfig(r, eventHandler(stderr, r), dockerPlugin, stateDir)
+	if err != nil {
+		return err
+	}
+
+	return apply(c, configDir)
+}
 ```
 
-Plugin types are held as types generated from the plugin's schema. The
+`status` applies nothing. `Load` reads the saved state into the `Config`
+without the configuration and without calling a provider, so the lookups
+answer from what `apply` saved. It loads the plugins first, because a saved
+plugin type is read back through its plugin's schema, but it never contacts
+Docker:
+
+```go title="example/plugin/main.go"
+func statusCommand(stdout io.Writer, dockerPlugin, stateDir string) error {
+	c, err := newConfig(registry.NewPluginRegistry(), nil, dockerPlugin, stateDir)
+	if err != nil {
+		return err
+	}
+
+	if err := load(c); err != nil {
+		return err
+	}
+
+	return status(stdout, c)
+}
+```
+
+`status` draws the tree with [Lip Gloss](https://github.com/charmbracelet/lipgloss).
+It reads the networks, containers and templates back from the `Config`.
+Plugin types are held as types generated from the plugin's schema, and the
 lookup copies them into the plugin's Go type, so reading them back looks the
 same as it does without plugins. A type with no subtype is looked up by its
 type alone:
 
-```go title="example/plugin/main.go"
+```go title="example/plugin/status.go"
 	// template has no subtype, so its address has one segment before the name
 	templates, err := xcl.FindByType[template.Template](c, "template")
 	if err != nil {
-		return err
+		return nil, err
 	}
 ```
 
-At the end the program destroys whatever was applied, even when applying or
-reporting failed part way, so it never leaves containers behind. `Destroy`
-works from the saved state alone and calls each provider's `Destroy`,
-dependents before what they depend on. Then the Docker plugin's process is
-stopped:
+Each resource saved in state records what it links to in `Meta.Links`, every
+reference in its configuration. `status` nests each resource under the one it
+depends on that is furthest down the chain, so the template, which reads both
+the network and the container, sits under the container. The colours come
+from a renderer made for standard output, so they show only in a terminal.
+
+`inspect` reads the state the same way, finds the resource by its address and
+turns it back into configuration text with `EncodeEntity`. It asks for the
+values the provider set, each marked, and for every reference as it was
+written, so the text shows how the resource is wired to the others. In a
+terminal it is syntax highlighted through `xcl.Highlight`:
+
+```go title="example/plugin/inspect.go"
+func inspect(out io.Writer, c *xcl.Config, address string) error {
+	entity, err := c.FindResource(address)
+	if errors.Is(err, xcl.ErrNotFound) {
+		return fmt.Errorf("no resource %s in the saved state, xcl-docker status lists them", address)
+	}
+	if err != nil {
+		return err
+	}
+
+	options := []xcl.EncodeOption{xcl.IncludeComputed(), xcl.ShowReferences()}
+
+	// xcl never checks for a terminal, asking it for colour is the program's
+	// decision. It is decided for out itself, so output to a file or a pipe
+	// is plain text.
+	if lipgloss.NewRenderer(out).ColorProfile() != termenv.Ascii {
+		renderer, err := highlight.NewANSIRenderer()
+		if err != nil {
+			return err
+		}
+
+		options = append(options, xcl.Highlight(renderer))
+	}
+
+	text, err := xcl.EncodeEntity(entity, options...)
+	if err != nil {
+		return err
+	}
+
+	_, err = out.Write(text)
+
+	return err
+}
+```
+
+`destroy` needs no configuration either. `Destroy` works from the saved
+state alone and calls each provider's `Destroy`, dependents before what they
+depend on:
 
 ```go title="example/plugin/main.go"
-	// Destroy whatever was applied, even when applying or reporting failed
-	// part way, so the example never leaves containers behind
-	if c != nil && c.EntityCount() > 0 {
-		err = errors.Join(err, destroy(os.Stdout, c))
+func destroyCommand(stderr io.Writer, dockerPlugin, stateDir string) error {
+	if err := client.Ping(context.Background()); err != nil {
+		return err
 	}
 
-	// The Docker plugin runs as a separate process, stop it when done
-	for _, host := range r.GetPluginHosts() {
-		host.Stop()
+	r := registry.NewPluginRegistry()
+
+	c, err := newConfig(r, eventHandler(stderr, r), dockerPlugin, stateDir)
+	if err != nil {
+		return err
 	}
+
+	return destroy(c)
+}
+```
+
+A registered plugin that fails to load, such as a binary that was never
+built, fails the operation with an error matching `xcl.ErrPluginLoad`, which
+the example turns into a hint:
+
+```go title="example/plugin/main.go"
+func explainPluginLoad(err error) error {
+	if errors.Is(err, xcl.ErrPluginLoad) {
+		return fmt.Errorf("%w, build it with `make build` in example/plugin", err)
+	}
+
+	return err
+}
 ```
 
 ## Testing
 
 The providers are unit tested without Docker. Each test hands the provider
-a `MockClient`, the Mockery mock of the `Client` interface, sets the calls
-it expects, and checks what the provider did with the answer:
+a `MockDocker`, the Mockery mock of the `client.Docker` interface, sets the
+calls it expects, and checks what the provider did with the answer:
 
-```go title="example/plugin/docker/network_test.go"
+```go title="example/plugin/plugins/docker/resources/network_test.go"
 func TestNetworkCreateFillsTheDockerID(t *testing.T) {
-	client := mocks.NewMockClient(t)
+	client := mocks.NewMockDocker(t)
 	client.EXPECT().
 		NetworkCreate(context.Background(), "app", network.CreateOptions{
 			Driver:     "bridge",
@@ -615,21 +742,21 @@ func TestNetworkCreateFillsTheDockerID(t *testing.T) {
 }
 ```
 
-The mock lives in `docker/mocks` and is generated, not written: after a
-change to `Client`, `make generate` regenerates it with the Mockery release
-pinned in the `Makefile`.
+The mock lives in `plugins/docker/client/mocks` and is generated, not written:
+after a change to `client.Docker`, `make generate` regenerates it with the
+Mockery release pinned in the `Makefile`.
 
 The tests that need a real engine, those that run the providers against
-Docker and the end to end test of the program, call `docker.Ping` first and
+Docker and the end to end test of the program, call `client.Ping` first and
 skip when no engine answers, so `make test` passes on a machine without
 Docker:
 
-```go title="example/plugin/docker/docker_test.go"
+```go title="example/plugin/plugins/docker/resources/docker_test.go"
 // requireDocker skips the test when no Docker engine is reachable
 func requireDocker(t *testing.T) {
 	t.Helper()
 
-	if err := Ping(context.Background()); err != nil {
+	if err := client.Ping(context.Background()); err != nil {
 		t.Skip(err.Error()) // Ping already says no Docker engine is reachable
 	}
 }
@@ -638,22 +765,32 @@ func requireDocker(t *testing.T) {
 ## Run it
 
 From the `example/plugin` directory, with a Docker engine running, `make run`
-builds the Docker plugin into `build/` and then runs the example:
+builds `xcl-docker` and the Docker plugin side by side into `build/`, then
+runs the three commands one after another:
 
 ```bash
 make run
 ```
 
-The events go to standard error. The `Apply` starts, then both plugins load,
+which is the same as:
+
+```bash
+make build
+./build/xcl-docker apply ./config
+./build/xcl-docker status
+./build/xcl-docker destroy
+```
+
+The events go to standard error. For `apply`, the `Apply` starts, then both plugins load,
 the Docker plugin started as a process, each reporting the block types it
 provides:
 
 ```text
-3:53PM INFO apply start source=core operation=apply phase=start
-3:53PM INFO load start source=core operation=load phase=start plugin=TemplatePlugin
-3:53PM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin
-3:53PM INFO load start source=core operation=load phase=start plugin=docker-plugin
-3:53PM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin
+11:37AM INFO apply start source=core operation=apply phase=start
+11:37AM INFO load start source=core operation=load phase=start plugin=TemplatePlugin
+11:37AM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin
+11:37AM INFO load start source=core operation=load phase=start plugin=docker-plugin
+11:37AM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin
 ```
 
 Then the lifecycle runs. Here is the container and the template, trimmed
@@ -661,9 +798,9 @@ from the full run. After each `create success` the receiver prints the
 resource as configuration text, with the values the provider set marked:
 
 ```text
-3:53PM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config/main.xcl
-3:53PM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.2 name=web
-3:53PM INFO create success source=core operation=create phase=success resource=docker.container.web type=container.web file=config/main.xcl duration=195.565024ms
+11:37AM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config/main.xcl
+11:37AM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.2 name=web
+11:37AM INFO create success source=core operation=create phase=success resource=docker.container.web type=container.web file=config/main.xcl duration=199.005204ms
   docker "container" "web" {
     image = "nginx:1.27-alpine"
 
@@ -672,12 +809,12 @@ resource as configuration text, with the values the provider set marked:
       aliases = ["web"]
     }
 
-    docker_id  = "2c6eca0d674b10c0dc9e353607cef4e710ea112fb43bb2d8a6aff5f615b03c3f" # set by the provider
+    docker_id  = "84afde72343a5f882468c0735b3c5c2ef4e55a5694adb1678fe3e668154fa76f" # set by the provider
     ip_address = "10.42.0.2" # set by the provider
   }
-3:53PM INFO create start source=core operation=create phase=start resource=template.welcome type=template.welcome file=config/main.xcl
-3:53PM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
-3:53PM INFO create success source=core operation=create phase=success resource=template.welcome type=template.welcome file=config/main.xcl duration=169.511µs
+11:37AM INFO create start source=core operation=create phase=start resource=template.welcome type=template.welcome file=config/main.xcl
+11:37AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
+11:37AM INFO create success source=core operation=create phase=success resource=template.welcome type=template.welcome file=config/main.xcl duration=127.391µs
   template "welcome" {
     source      = "Welcome to the {{network}} network.\nThe web container answers at http://{{address}}/\n"
     destination = "./build/rendered/welcome.txt"
@@ -686,7 +823,7 @@ resource as configuration text, with the values the provider set marked:
       network = "app"
     }
   }
-3:53PM INFO apply success source=core operation=apply phase=success duration=206.737013ms
+11:37AM INFO apply success source=core operation=apply phase=success duration=210.746466ms
 ```
 
 Each provider call is a `start` and a `success` from `core`, xcl itself, and
@@ -702,55 +839,80 @@ template first, then the container, then the network it was on (trimmed to the
 provider messages and the overall start and success):
 
 ```text
-3:53PM INFO destroy start source=core operation=destroy phase=start
-3:53PM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
-3:53PM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/main.xcl name=web
-3:53PM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=2f783968958bf8d9ee7914b98f809c0ced9b93509ad59946d0ff1f250f0c3764 name=app
-3:53PM INFO destroy success source=core operation=destroy phase=success duration=352.454528ms
+11:37AM INFO destroy start source=core operation=destroy phase=start
+11:37AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
+11:37AM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/main.xcl name=web
+11:37AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=61668d4b88e48699ea1dfb4f6a2878ff0aa3e8242a953fc63dae494132b5e7ea name=app
+11:37AM INFO destroy success source=core operation=destroy phase=success duration=376.741086ms
 ```
+
+`status` prints nothing but its tree: it gives xcl no event handler, so xcl
+is silent while it reads the state.
 
 With `XCL_LOG_LEVEL=debug` the plugin scoped messages show as well: what
 each `Init` logged, and go-plugin's own messages about starting the external
-process, marked `component=go-plugin`. Trimmed to the load:
+process, marked `component=go-plugin`. Trimmed to the load of an `apply`:
 
 ```text
-3:53PM INFO load start source=core operation=load phase=start plugin=TemplatePlugin
-3:53PM DEBU registering block types source=TemplatePlugin operation=load phase=log block_types=template
-3:53PM DEBU provider ready source=TemplatePlugin operation=load phase=log provider=template
-3:53PM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin
-3:53PM INFO load start source=core operation=load phase=start plugin=docker-plugin
-3:53PM DEBU starting plugin source=docker-plugin operation=load phase=log args=[./build/docker-plugin] component=go-plugin path=./build/docker-plugin
-3:53PM DEBU plugin started source=docker-plugin operation=load phase=log component=go-plugin path=./build/docker-plugin pid=1237846
-3:53PM DEBU using plugin source=docker-plugin operation=load phase=log component=go-plugin version=1
-3:53PM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin
-3:53PM INFO parse success source=core operation=parse phase=success resource=variable.output_dir type=variable.output_dir file=config/main.xcl
-3:53PM DEBU provider ready source=docker-plugin operation=load phase=log
-3:53PM DEBU provider ready source=docker-plugin operation=load phase=log
-3:53PM DEBU registering block types source=docker-plugin operation=load phase=log block_types="docker.network, docker.container"
+11:12AM INFO load start source=core operation=load phase=start plugin=TemplatePlugin
+11:12AM DEBU registering block types source=TemplatePlugin operation=load phase=log block_types=template
+11:12AM DEBU provider ready source=TemplatePlugin operation=load phase=log provider=template
+11:12AM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin
+11:12AM INFO load start source=core operation=load phase=start plugin=docker-plugin
+11:12AM DEBU using plugin source=docker-plugin operation=load phase=log component=go-plugin version=1
+11:12AM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin
+11:12AM DEBU provider ready source=docker-plugin operation=load phase=log
+11:12AM DEBU provider ready source=docker-plugin operation=load phase=log
+11:12AM DEBU registering block types source=docker-plugin operation=load phase=log block_types="docker.network, docker.container"
 ```
 
 The two plugins' `Init` messages do not look quite the same. The in-process
 template provider's `provider ready` carries `provider=template`, but the
 Docker providers' `provider ready` lines carry no `provider=` tag: the tag is
 only added in-process. The Docker plugin's `Init` messages, which cross the
-process boundary, also arrive after its `load success` line, among the parse
-events, rather than between its `load start` and `load success`.
+process boundary, also arrive after its `load success` line rather than
+between its `load start` and `load success`.
 
-The program's own output, on standard output, shows the computed values
-filled in and the rendered file, with the container's address in it:
+`apply` and `destroy` print nothing to standard output. `status`, a separate
+run, prints the tree from the saved state alone, each resource under what it
+depends on, with the computed values the Docker plugin set:
 
 ```text
-## Networks
-  docker.network.app name=app subnet=10.42.0.0/24 docker_id=2f783968958bf8d9ee7914b98f809c0ced9b93509ad59946d0ff1f250f0c3764
-## Containers
-  docker.container.web image=nginx:1.27-alpine ip_address=10.42.0.2 docker_id=2c6eca0d674b10c0dc9e353607cef4e710ea112fb43bb2d8a6aff5f615b03c3f
-## Templates
-  template.welcome destination=./build/rendered/welcome.txt
+● docker.network.app  10.42.0.0/24 · 61668d4b88e4
+└── ● docker.container.web  nginx:1.27-alpine · 10.42.0.2 · 84afde72343a
+    └── ● template.welcome  ./build/rendered/welcome.txt
+```
+
+In a terminal the dots are green for a resource that was created, red for one
+that failed, and the Docker and template addresses are coloured by plugin.
+
+`xcl-docker inspect docker.container.web`, another run, prints the container
+as configuration, with the values the Docker plugin set and the reference to
+the network as it was written:
+
+```hcl
+docker "container" "web" {
+  image = "nginx:1.27-alpine"
+
+  network {
+    name    = docker.network.app.meta.name
+    aliases = ["web"]
+  }
+
+  docker_id  = "84afde72343a5f882468c0735b3c5c2ef4e55a5694adb1678fe3e668154fa76f" # set by the provider
+  ip_address = "10.42.0.2" # set by the provider
+}
+```
+
+The rendered file holds the container's address, which crossed from the
+Docker plugin to the template plugin:
+
+```text
 Welcome to the app network.
 The web container answers at http://10.42.0.2/
-## Destroyed
-  0 resources remaining
 ```
+
+After `destroy`, `status` prints `nothing applied`.
 
 ## What to notice
 
@@ -763,19 +925,23 @@ The web container answers at http://10.42.0.2/
   `template.welcome` and looked up with `FindByType` by its type alone.
 - **In-process and external look the same.** Both plugins are written
   against the same `plugins` package and log through the same
-  `plugins.Logger(ctx)`. Only how they are registered, and the `main` that
-  serves the external one, differ.
+  `plugins.Logger(ctx)`. Only how they are registered, and the one line
+  `main` that hands the external one to `plugins.Serve`, differ.
+- **Each command is its own run, sharing only the state.** `apply` saves
+  the state, `status` reads it back with `Load`, and `destroy` works from it
+  alone, none of them needing what an earlier run held in memory.
 - **Plugins load when first needed.** Registering only records a plugin. It
-  is started and checked by the first `Apply`, and a plugin that fails to
+  is started and checked by the first operation, and a plugin that fails to
   load, such as a Docker plugin binary that was never built, fails it with
-  `xcl.ErrPluginLoad`.
+  `xcl.ErrPluginLoad`. The Docker plugin's process runs only while an
+  operation uses it, so the program never stops it.
 - **Destroy calls the providers in reverse dependency order.** `Destroy`
   works from the saved state alone, and removes the template before the
   container and the container before its network, the reverse of the order
   they were created in.
-- **The tests run without Docker.** The providers hold a narrow `Client`
+- **The tests run without Docker.** The providers hold a narrow `client.Docker`
   interface, so their unit tests use a generated mock, and the tests that
-  need a real engine skip when `docker.Ping` finds none.
+  need a real engine skip when `client.Ping` finds none.
 
 </Prose>
 
