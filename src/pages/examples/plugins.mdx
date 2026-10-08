@@ -21,6 +21,16 @@ a type with `Create`, `Read`, `Changed`, `Update` and `Destroy` methods that
 xcl calls as a configuration is applied and destroyed. Providers are packaged
 in **plugins**, and a plugin provides as many block types as it likes.
 
+On each apply, xcl first `Read`s every resource it saved last time and asks
+its provider's `Changed` whether to leave it alone, `Update` it in place or
+replace it. A replacement is a `Destroy` followed by a `Create`, and
+`Changed` is told which of the resources a block depends on the same apply
+will update or replace, so a provider can replace a resource whose
+dependency is replaced. Every resource is decided before anything changes,
+then the replaced ones are destroyed, dependents first, and finally
+resources are created and updated in dependency order. See
+[Unchanged, update or replace](/replacement/) for the full rules.
+
 This example applies a configuration with three block types, provided by two
 plugins that do real work:
 
@@ -237,7 +247,10 @@ A provider is typed on the block's Go type, so every method receives a
 for a bridge network named after the block, labelled so the objects the
 example made can be found with `docker network ls`, and records the ID Docker
 gives it in the computed `DockerID`. `Destroy` removes the network by that
-ID. Change detection comes from the embedded `DefaultChanged`.
+ID. The provider embeds `DefaultChanged`, which answers update whenever the
+configured values differ, and overrides `Changed` for the one thing Docker
+cannot change in place, as [Update or replace](#update-or-replace) below
+shows.
 
 Each method logs through `plugins.Logger(ctx)`, the logger xcl puts in the
 call's context. It is already bound to the resource, its type, its file and
@@ -366,6 +379,61 @@ func (p *containerProvider) startContainer(ctx context.Context, c *Container, id
 }
 ```
 
+### Update or replace
+
+`DefaultChanged` never answers replace, but most of what a Docker network or
+container is made from is fixed when Docker creates it. So both providers
+override `Changed`. A network cannot move to a new address range, so a new
+`subnet` replaces it, and anything else is left to `DefaultChanged`:
+
+```go title="example/plugin/plugins/docker/resources/network.go"
+// Changed answers replace when the subnet changes: Docker can not move a
+// network to a new address range, the network has to be removed and created
+// again. Any other change is left to DefaultChanged.
+func (p *networkProvider) Changed(ctx context.Context, old *Network, new *Network, dependencies []entity.DependencyChange) (entity.Change, error) {
+	if old.Subnet != new.Subnet {
+		return entity.Replace, nil
+	}
+
+	return p.DefaultChanged.Changed(ctx, old, new, dependencies)
+}
+```
+
+The container uses its `dependencies`. They list the resources it depends on
+that this apply will update or replace, here the network its `network` block
+names. When the network is replaced, the container would be left attached to
+a network that no longer exists, so it is replaced too. A new image, command,
+environment or set of networks also replaces it, because Docker fixes them
+when it creates a container:
+
+```go title="example/plugin/plugins/docker/resources/container.go"
+// Changed answers replace when a resource the container depends on is
+// replaced, such as the network it is attached to, since the container would
+// be left attached to a network that no longer exists. It also answers replace
+// when the image, command, environment or networks change: Docker fixes them
+// when it creates a container. Any other change is left to DefaultChanged.
+func (p *containerProvider) Changed(ctx context.Context, old *Container, new *Container, dependencies []entity.DependencyChange) (entity.Change, error) {
+	for _, dependency := range dependencies {
+		if dependency.Change == entity.Replace {
+			return entity.Replace, nil
+		}
+	}
+
+	if old.Image != new.Image ||
+		!equalStrings(old.Command, new.Command) ||
+		!equalEnvironment(old.Environment, new.Environment) ||
+		!equalAttachments(old.Networks, new.Networks) {
+		return entity.Replace, nil
+	}
+
+	return p.DefaultChanged.Changed(ctx, old, new, dependencies)
+}
+```
+
+With every Docker setting answering replace, both providers' `Update` methods
+return the resource unchanged: they are only reached for changes that need
+no Docker call, such as xcl's own metadata.
+
 ### The external binary
 
 The Docker plugin is ordinary Go, written against the same `plugins` package
@@ -414,8 +482,8 @@ func (p *TemplatePlugin) Init(logger logger.Logger, state plugins.State) error {
 
 By the time the provider's `Create` is called, every variable is resolved,
 including the address the Docker plugin computed in another process. It
-renders the template and writes the file, and its `Destroy` removes the file
-again:
+renders the template and writes the file, its `Update` renders it again, and
+its `Destroy` removes the file:
 
 ```go title="example/plugin/plugins/template/template.go"
 // Create renders the template with its variables and writes the result to the
@@ -429,6 +497,26 @@ func (p *provider) Create(ctx context.Context, t *Template) (*Template, error) {
 	plugins.Logger(ctx).Info("rendered template", "destination", t.Destination)
 
 	return t, nil
+}
+```
+
+Unlike the Docker settings, a new source or new variables can be handled in
+place, so the template provider leaves those to `DefaultChanged`, which
+answers update. Only a new destination replaces it, so that its `Destroy`
+removes the file at the old path:
+
+```go title="example/plugin/plugins/template/template.go"
+// Changed answers replace when the destination changes: Update renders to the
+// new path but would leave the file at the old one behind, so the template is
+// destroyed, removing its file, and created again. A change to the source or
+// variables is left to DefaultChanged, which answers update, and Update
+// renders the file again.
+func (p *provider) Changed(ctx context.Context, old *Template, new *Template, dependencies []entity.DependencyChange) (entity.Change, error) {
+	if old.Destination != new.Destination {
+		return entity.Replace, nil
+	}
+
+	return p.DefaultChanged.Changed(ctx, old, new, dependencies)
 }
 ```
 
@@ -834,6 +922,18 @@ template's source changed reports `template.welcome` as an update, and that
 planning saves nothing. One more checks that `plan` without a path fails with
 the usage, which needs no engine.
 
+The address range change has tests of its own. The unit tests check each
+provider's `Changed` against a mock, such as a new subnet answering replace.
+Against a real engine, `main_test.go` applies `./config` and then
+`./config-subnet` to the same state directory, and checks that the real
+network Docker reports has the new range `10.42.0.0/23` and that the old
+network is gone, that the container is a new one, running and attached to the
+new network, that the template was rendered again with the new container's
+address, and that planning `./config-subnet` afterwards reports no changes.
+`plan_test.go` checks the plan of `./config-subnet` after `./config`: the
+network replaced because it cannot be updated in place, the container
+replaced because the network is, and the template updated.
+
 ## Run it
 
 From the `example/plugin` directory, with a Docker engine running, `make run`
@@ -986,34 +1086,80 @@ The web container answers at http://10.42.0.2/
 
 Before destroying, `plan` shows what applying a changed configuration would
 do. Planning `./config` as it was applied prints only
-`Diff: no changes, 3 unchanged.` Copy it, change the template's source and
-bump the container's image to `nginx:1.28-alpine`, and plan the copy:
+`Diff: no changes, 3 unchanged.` The example's second configuration,
+`./config-subnet`, is `./config` with the network's address range widened
+from `10.42.0.0/24` to `10.42.0.0/23`. Each directory is a complete
+configuration of its own, so `./config` applies on its own as before. `make
+replace` applies `./config`, plans and applies `./config-subnet`, prints the
+status and destroys everything. The plan, with `./config` applied:
 
 ```bash
-./build/xcl-docker plan ./changed
+./build/xcl-docker plan ./config-subnet
 ```
 
-Example output, plain here and coloured in a terminal:
+prints, plain here and coloured in a terminal:
 
 ```text
-  # docker.container.web will be updated
-  ~ docker "container" "web" {
-      ~ image = "nginx:1.27-alpine" -> "nginx:1.28-alpine"
+  # docker.container.web will be replaced because docker.network.app is replaced
+-/+ docker "container" "web" {}
+
+  # docker.network.app will be replaced, it cannot be updated in place
+-/+ docker "network" "app" {
+      ~ subnet = "10.42.0.0/24" -> "10.42.0.0/23"
     }
 
   # template.welcome will be updated
   ~ template "welcome" {
-      ~ source               = "Welcome to the {{network}} network.\nThe web container answers at http://{{address}}/\n" -> "Hello from the {{network}} network.\nThe web container answers at http://{{address}}/\n"
       ~ variables["address"] = "10.42.0.2" -> (known after apply)
     }
 
-Diff: 0 to create, 2 to update, 0 to replace, 0 to delete, 1 unchanged.
+Diff: 0 to create, 1 to update, 2 to replace, 0 to delete, 0 unchanged.
 ```
 
-The template's `address` is `(known after apply)` because it reads the
-container's `ip_address`, a computed value the Docker plugin sets when it
-updates the container. Nothing was changed or saved: the container still runs
-`nginx:1.27-alpine`, and planning `./config` again still reports no changes.
+The network's provider answered replace for the new `subnet`. The
+container's configuration did not change at all, but its provider was told
+that the network it depends on is replaced, and answered replace too. The
+template's `address` is `(known after apply)` because it reads the
+container's `ip_address`, which the Docker plugin only sets when it creates
+the new container. Nothing was changed or saved by the plan.
+
+Applying `./config-subnet` reads and decides all three resources first, then
+destroys the container and the network, dependents first, then creates the
+network and the container again and updates the template, in dependency
+order. Trimmed to the provider calls, without the resources printed after
+each `create success`:
+
+```text
+8:05PM INFO changed success source=core operation=changed phase=success resource=docker.network.app type=network.app file=config-subnet/main.xcl duration=133.821µs
+8:05PM INFO changed success source=core operation=changed phase=success resource=docker.container.web type=container.web file=config-subnet/main.xcl duration=173.891µs
+8:05PM INFO changed success source=core operation=changed phase=success resource=template.welcome type=template.welcome file=config-subnet/main.xcl duration=25.66µs
+8:05PM INFO destroy start source=core operation=destroy phase=start resource=docker.container.web type=container.web file=config/main.xcl
+8:05PM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/main.xcl name=web
+8:05PM INFO destroy start source=core operation=destroy phase=start resource=docker.network.app type=network.app file=config/main.xcl
+8:05PM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=f66ab71320eb34a564fc559bfcf678d499ab7822eb2a7cbe5d1af279ac0130ce name=app
+8:05PM INFO create start source=core operation=create phase=start resource=docker.network.app type=network.app file=config-subnet/main.xcl
+8:05PM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.app type=network.app file=config-subnet/main.xcl id=e4015612fc24a36960c68d4eb06683101f924c3e4c389201609571c5377cf509 name=app
+8:05PM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config-subnet/main.xcl
+8:05PM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config-subnet/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.2 name=web
+8:05PM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-subnet/main.xcl
+8:05PM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-subnet/main.xcl destination=./build/rendered/welcome.txt
+8:05PM INFO apply success source=core operation=apply phase=success duration=832.366578ms
+```
+
+A replacement is a `destroy` and a `create` for the same resource, there is
+no separate replace event. The destroys name `config/main.xcl`, the file the
+saved resource came from, and the creates `config-subnet/main.xcl`. The new
+network has a new Docker ID and the new range, the new container is attached
+to it, and the template is rendered again with the new container's address.
+`status` shows the new network:
+
+```text
+● docker.network.app  10.42.0.0/23 · e4015612fc24
+└── ● docker.container.web  nginx:1.27-alpine · 10.42.0.2 · 2730a76362eb
+    └── ● template.welcome  ./build/rendered/welcome.txt
+```
+
+and planning `./config-subnet` again prints `Diff: no changes, 3 unchanged.`
 
 After `destroy`, `status` prints `nothing applied`.
 
@@ -1038,6 +1184,10 @@ After `destroy`, `status` prints `nothing applied`.
   load, such as a Docker plugin binary that was never built, fails it with
   `xcl.ErrPluginLoad`. The Docker plugin's process runs only while an
   operation uses it, so the program never stops it.
+- **Providers decide between update and replace.** Each Docker provider
+  overrides `Changed` to answer replace for what Docker fixes at creation,
+  and the container is replaced whenever the network it depends on is, so a
+  new address range replaces both and updates the template.
 - **Destroy calls the providers in reverse dependency order.** `Destroy`
   works from the saved state alone, and removes the template before the
   container and the container before its network, the reverse of the order
