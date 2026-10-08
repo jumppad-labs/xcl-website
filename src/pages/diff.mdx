@@ -71,9 +71,24 @@ Each resource an apply would change gets exactly one action:
 | Action | When |
 |---|---|
 | `create` | It is in the configuration but not in the saved state, or its provider reports that the real resource no longer exists. |
-| `update` | Its provider reports a change, or one of its values is only known after apply. |
-| `replace` | Its last apply failed, so an apply destroys it and creates it again, whether or not its configuration changed. |
+| `update` | Its provider reports a change it can make in place, or one of its values is only known after apply. |
+| `replace` | An apply would destroy it and create it again, for one of the reasons below. |
 | `delete` | It is in the saved state but no longer in the configuration. |
+
+A resource is replaced for one of three reasons, and the diff records which in
+the resource's `Reason`:
+
+| Reason | When |
+|---|---|
+| `failed` | Its last apply failed. Its provider is not asked: an apply destroys it and creates it again, whether or not its configuration changed. |
+| `provider` | Its provider reports that it cannot make the change in place, such as a new address range for a network. |
+| `dependency` | Its provider answers replace because a resource it depends on is being replaced. `ReplacedDeps` names those resources, sorted by address. |
+
+A provider decides between leaving a resource alone, updating it and replacing
+it by comparing the saved and configured values, and it is told which of the
+resources it depends on an apply will update or replace. See
+[Unchanged, update or replace](/replacement/) for how providers make that
+decision.
 
 A resource whose provider reports no change is unchanged. It is counted in
 the summary but not listed. Only resources an apply hands to a provider take
@@ -117,7 +132,8 @@ See [Sensitive values](/sensitive-values/) for marking a field sensitive.
 ## Reading the rendered output
 
 `diff.Render` turns a result into text in the style of a git diff, ready to
-print or log. This result has one resource for each action:
+print or log. This result has a resource for each action, and a replacement
+for each reason:
 
 ```text
   # resource.container.api will be updated
@@ -136,19 +152,29 @@ print or log. This result has one resource for each action:
       + db_host = (known after apply)
     }
 
-  # resource.network.app will be replaced, its last apply failed
--/+ resource "network" "app" {}
+  # resource.container.worker will be replaced because resource.network.app is replaced
+-/+ resource "container" "worker" {}
+
+  # resource.network.app will be replaced, it cannot be updated in place
+-/+ resource "network" "app" {
+      ~ subnet = "10.42.0.0/24" -> "10.42.0.0/23"
+    }
+
+  # resource.network.backup will be replaced, its last apply failed
+-/+ resource "network" "backup" {}
 
   # resource.postgres.old will be deleted
   - resource "postgres" "old" {}
 
-Diff: 1 to create, 2 to update, 1 to replace, 1 to delete, 4 unchanged.
+Diff: 1 to create, 2 to update, 3 to replace, 1 to delete, 4 unchanged.
 ```
 
 Each resource starts with a comment saying what an apply would do with it,
-followed by its block header, marked with the action. Inside the block there
-is one line for each change, with the `=` signs lined up. Resources appear in
-the result's order, which is sorted by address. A resource with no changes is
+followed by its block header, marked with the action. For a replacement the
+comment also says why: its last apply failed, it cannot be updated in place,
+or the resources it depends on that are replaced, named one by one, as for
+`resource.container.worker` above. Inside the block there is one line for
+each change, with the `=` signs lined up. Resources appear in the result's order, which is sorted by address. A resource with no changes is
 written as a header with an empty body.
 
 | Marker | Meaning |
@@ -156,7 +182,7 @@ written as a header with an empty body.
 | `+` | a resource that would be created, or a value that would be added |
 | `-` | a resource that would be deleted, or a value that would be removed |
 | `~` | a resource that would be updated, or a value that would change, written as `before -> after` |
-| `-/+` | a resource that would be replaced |
+| `-/+` | a resource that would be replaced: destroyed, then created again |
 
 A value only known once an apply has run is written as `(known after apply)`.
 When it replaces a saved value, the line shows both, as
@@ -210,15 +236,25 @@ empty scope, so a renderer that escapes text sees every byte.
 The result is also the machine-readable form of a diff. `json.Marshal(d)`
 writes the summary and the resources with their changes, each path in its
 written form, such as `"ports[0].host"`. Values that are absent, such as the
-values of a sensitive change that was not revealed, are left out:
+values of a sensitive change that was not revealed, are left out. A
+replacement carries its `reason`, and one replaced because of its
+dependencies also lists them in `replaced_dependencies`. Both are left out for
+every other action:
 
 ```json
 {
-  "summary": { "create": 1, "update": 0, "replace": 0, "delete": 0, "unchanged": 4 },
+  "summary": { "create": 1, "update": 0, "replace": 2, "delete": 0, "unchanged": 4 },
   "resources": [
     { "address": "resource.container.web", "action": "create",
       "changes": [ { "path": "image", "after": "nginx" },
-                   { "path": "db_host", "unknown": true } ] }
+                   { "path": "db_host", "unknown": true } ] },
+    { "address": "resource.container.worker", "action": "replace",
+      "reason": "dependency",
+      "replaced_dependencies": [ "resource.network.app" ] },
+    { "address": "resource.network.app", "action": "replace",
+      "reason": "provider",
+      "changes": [ { "path": "subnet", "before": "10.42.0.0/24",
+                     "after": "10.42.0.0/23" } ] }
   ]
 }
 ```
