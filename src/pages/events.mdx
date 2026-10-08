@@ -29,7 +29,6 @@ way to see the stream is one option:
 
 ```go title="main.go"
 c, err := xcl.NewConfig(
-	xcl.WithPluginRegistry(r),
 	xcl.WithEventHandler(events.SlogHandler(slog.Default())),
 )
 if err != nil {
@@ -78,7 +77,6 @@ To handle events yourself, `EventHandler` is a function that takes an event:
 var failures []error
 
 c, err := xcl.NewConfig(
-	xcl.WithPluginRegistry(r),
 	xcl.WithEventHandler(func(e xcl.Event) {
 		if e.Phase == events.PhaseError {
 			failures = append(failures, e.Error)
@@ -127,8 +125,8 @@ Event masking changes only `Data`. Errors and log details always show
 itself as the marker. A receiver holding a reversible masker can open a masked
 value with `mask.Unmask(data, m)`; anything it cannot open faithfully, such as
 a hash, data from a different masker or data under a different key, fails with
-`xcl.ErrUnrecoverable` and returns no value. `xcl.EncodeSavedEntity` shows
-every masked value as `(sensitive)`.
+`xcl.ErrUnrecoverable` and returns no value. `Event.Entity()` and
+`c.EncodeSavedEntity` show every masked value as `(sensitive)`.
 
 To keep secrets out of the state file as well, see
 [State masking](/state-masking/).
@@ -143,7 +141,7 @@ The operations and phases are defined as constants in the `events` package.
 | `load_state` | a whole call to `Load`, reading the saved state |
 | `parse` | one block as it is read, with the file it came from |
 | `create`, `read`, `changed`, `update`, `destroy` | one provider call for one resource |
-| `discover` | searching the directories given to `DiscoverPlugins` |
+| `discover` | searching the directories given to a local registry's `RegisterPluginDirectory` |
 | `load` | starting and checking one plugin, and anything a plugin logs outside a provider call |
 | `events` | the event stream itself, for a `blocked` announcement |
 
@@ -207,7 +205,6 @@ get their resource and step, is covered in
 
 ```go title="main.go"
 c, err := xcl.NewConfig(
-	xcl.WithPluginRegistry(r),
 	xcl.WithEventHandler(handler),
 	// hold more undelivered events before emitting waits
 	xcl.WithEventBufferSize(4096),
@@ -239,7 +236,7 @@ readable, coloured terminal output. It is an example, not part of xcl, so it
 never becomes a dependency of an application that uses xcl.
 
 ```go title="example/prettylog/prettylog.go"
-func Handler(w io.Writer, level slog.Level, reg *registry.PluginRegistry) xcl.EventHandler {
+func Handler(w io.Writer, level slog.Level) xcl.EventHandler {
 	logger := charmlog.NewWithOptions(w, charmlog.Options{
 		Level:           charmlog.Level(level),
 		ReportTimestamp: true,
@@ -253,8 +250,11 @@ func Handler(w io.Writer, level slog.Level, reg *registry.PluginRegistry) xcl.Ev
 }
 ```
 
-Given the registry, it also writes the configuration of each entity it sees
-created beneath the line reporting it, using `xcl.EncodeSavedEntity`. When its
+It also writes the configuration of each entity it sees created beneath the
+line reporting it. The event itself returns that entity, as the Go type
+registered for its block type, with `Event.Entity()`, and the receiver turns
+it back into configuration text with `xcl.EncodeEntity`, so it needs nothing
+from the application but event data at `xcl.EventDataProcessed`. When its
 writer shows colour it asks xcl to colour that configuration with
 `xcl.Highlight`, so the example has no highlighting code of its own. See
 [Configuration text](/configuration-text/#highlighting).
@@ -264,7 +264,7 @@ named by `XCL_LOG_LEVEL`, one of `debug`, `info`, `warn` or `error`, and info
 when it is unset:
 
 ```go title="example/plugin/main.go"
-	c, err := apply(r, prettylog.Handler(os.Stderr, prettylog.LevelFromEnv(), r), configDir, dockerPlugin, stateDir)
+	return prettylog.Handler(out, prettylog.LevelFromEnv())
 ```
 
 A plugin that fails to load, here a Docker plugin path with no binary behind
@@ -273,11 +273,11 @@ in-process template plugin loads as usual:
 
 ```text
 3:53PM INFO apply start source=core operation=apply phase=start
-3:53PM INFO load start source=core operation=load phase=start plugin=TemplatePlugin
-3:53PM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin
-3:53PM INFO load start source=core operation=load phase=start plugin=missing
-3:53PM ERRO load error source=core operation=load phase=error error="plugin ./build/missing failed to load: failed to get plugin client: fork/exec ./build/missing: no such file or directory" plugin=missing
-3:53PM ERRO apply error source=core operation=apply phase=error duration=411.673µs error="plugin ./build/missing failed to load: failed to get plugin client: fork/exec ./build/missing: no such file or directory"
+3:53PM INFO load start source=core operation=load phase=start plugin=TemplatePlugin registry=local
+3:53PM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin registry=local
+3:53PM INFO load start source=core operation=load phase=start plugin=missing registry=local
+3:53PM ERRO load error source=core operation=load phase=error error="plugin missing from registry local failed to load: unable to start plugin binary ./build/missing: failed to get plugin client: fork/exec ./build/missing: no such file or directory" plugin=missing registry=local
+3:53PM ERRO apply error source=core operation=apply phase=error duration=411.673µs error="plugin missing from registry local failed to load: unable to start plugin binary ./build/missing: failed to get plugin client: fork/exec ./build/missing: no such file or directory"
 ```
 
 ## The one exception

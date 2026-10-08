@@ -524,31 +524,30 @@ package, and `main` passes the command to one function per command:
 	}
 ```
 
-Every command builds its `Config` the same way. Registering a plugin only
-records it. `RegisterPlugin` takes an in-process plugin and
-`RegisterPluginWithPath` an external plugin binary, and neither starts or
-checks anything. The plugins load at the start of the first operation, once
-per registry, and each brings its own block types with it, so nothing else
-needs registering. The state is kept in a file, which is how one run picks
-up what the last one saved:
+Every command builds its `Config` the same way. Plugins come from a
+registry, and the example uses the local registry, which holds the plugins an
+application supplies itself. Registering a plugin only records it.
+`RegisterPlugin` takes an in-process plugin and `RegisterExternalPlugin` the
+path to an external plugin binary, and neither starts or checks anything nor
+returns an error. `xcl.WithRegistry` gives the registry to the `Config`. The
+plugins load at the start of the first operation, once per `Config`, and each
+brings its own block types with it, so nothing else needs declaring. The
+state is kept in a file, which is how one run picks up what the last one
+saved:
 
 ```go title="example/plugin/main.go"
-func newConfig(r *registry.PluginRegistry, handler xcl.EventHandler, dockerPlugin, stateDir string) (*xcl.Config, error) {
-	// Register the in-process plugin, which provides every block type it
-	// registers in Init. Registering only records the plugin, it is loaded
-	// by the first operation.
-	if err := r.RegisterPlugin(&template.TemplatePlugin{}); err != nil {
-		return nil, err
-	}
-
-	// Register the external plugin binary, it is started by the first
-	// operation
-	if err := r.RegisterPluginWithPath(dockerPlugin); err != nil {
-		return nil, err
-	}
+func newConfig(handler xcl.EventHandler, dockerPlugin, stateDir string) (*xcl.Config, error) {
+	// The local registry holds plugins the application supplies itself: the
+	// in-process plugin, which provides every block type it registers in
+	// Init, and the external plugin binary. Registering only records a
+	// plugin, each is loaded, and the binary started, by the first operation
+	// that needs plugins.
+	local := registry.NewLocal()
+	local.RegisterPlugin(&template.TemplatePlugin{})
+	local.RegisterExternalPlugin(dockerPlugin)
 
 	return xcl.NewConfig(
-		xcl.WithPluginRegistry(r),
+		xcl.WithRegistry(local),
 		// Keep the state in a file, so each command, a separate run of the
 		// program, works from what the last one saved
 		xcl.WithStatePath(stateDir),
@@ -561,10 +560,19 @@ func newConfig(r *registry.PluginRegistry, handler xcl.EventHandler, dockerPlugi
 }
 ```
 
-`handler` is the receiver for xcl's [events](/events/). Each command passes
-it the example's pretty terminal receiver, writing to standard error at the
-level in `XCL_LOG_LEVEL`, info by default. The receiver shares the registry,
-which is how it shows each resource's
+`handler` is the receiver for xcl's [events](/events/). Each command that
+changes something passes it the example's pretty terminal receiver, writing
+to standard error at the level in `XCL_LOG_LEVEL`, info by default:
+
+```go title="example/plugin/main.go"
+func eventHandler(out io.Writer) xcl.EventHandler {
+	return prettylog.Handler(out, prettylog.LevelFromEnv())
+}
+```
+
+The receiver needs nothing else from the program. Each event returns the
+entity it carries with `Event.Entity()`, typed by the `Config` that delivered
+it, which is how the receiver shows each resource's
 [configuration](/configuration-text/) as it is created.
 
 `apply` checks that a Docker engine answers before it applies anything, so a
@@ -580,12 +588,7 @@ func applyCommand(stderr io.Writer, configDir, dockerPlugin, stateDir string) er
 		return err
 	}
 
-	// the registry is built here so that the event receiver can share it: it
-	// is what types the entity an event carries, which is how the receiver
-	// shows each resource's configuration as it is created
-	r := registry.NewPluginRegistry()
-
-	c, err := newConfig(r, eventHandler(stderr, r), dockerPlugin, stateDir)
+	c, err := newConfig(eventHandler(stderr), dockerPlugin, stateDir)
 	if err != nil {
 		return err
 	}
@@ -598,11 +601,11 @@ func applyCommand(stderr io.Writer, configDir, dockerPlugin, stateDir string) er
 without the configuration and without calling a provider, so the lookups
 answer from what `apply` saved. It loads the plugins first, because a saved
 plugin type is read back through its plugin's schema, but it never contacts
-Docker:
+Docker. It prints only the tree, so it gives xcl no event handler:
 
 ```go title="example/plugin/main.go"
 func statusCommand(stdout io.Writer, dockerPlugin, stateDir string) error {
-	c, err := newConfig(registry.NewPluginRegistry(), nil, dockerPlugin, stateDir)
+	c, err := newConfig(nil, dockerPlugin, stateDir)
 	if err != nil {
 		return err
 	}
@@ -687,9 +690,7 @@ func destroyCommand(stderr io.Writer, dockerPlugin, stateDir string) error {
 		return err
 	}
 
-	r := registry.NewPluginRegistry()
-
-	c, err := newConfig(r, eventHandler(stderr, r), dockerPlugin, stateDir)
+	c, err := newConfig(eventHandler(stderr), dockerPlugin, stateDir)
 	if err != nil {
 		return err
 	}
