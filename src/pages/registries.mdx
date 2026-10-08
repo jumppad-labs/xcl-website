@@ -1,0 +1,351 @@
+---
+layout: ../layouts/Shell.astro
+title: "Registries - xcl"
+description: "How a Config gets its block types: plain Go types and plugins, both from registries added with WithRegistry. The local registry, load order, how problems are reported, clashes, and writing a registry of your own."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+
+<Hero
+  heading="Registries"
+  sub="Block types are given to a Config when it is created, from the registries added with WithRegistry: plain Go types and plugins alike. There is one way in and one place things are registered, and nothing loads until it is needed."
+/>
+
+<Prose>
+
+A `Config` knows two kinds of block type besides xcl's builtins. A declared
+type is a plain Go type that configuration is decoded into, with no provider.
+A plugin's types come with a provider. Both come from registries, added with
+`xcl.WithRegistry`, so there is one way in and one place things are
+registered: everything a `Config` can read is stated where it is created, and
+it is always clear where a type or plugin comes from.
+
+## The local registry
+
+The `registry` package ships the local registry, which holds the Go types and
+plugins an application supplies itself. Create one with `registry.NewLocal`,
+register on it, and give it to the `Config`:
+
+```go title="main.go"
+local := registry.NewLocal()
+local.RegisterType(&Deployment{}, "deployment")         // a plain Go type
+local.RegisterPlugin(&template.TemplatePlugin{})        // an in-process plugin
+local.RegisterExternalPlugin("./bin/xcl-plugin-docker") // an external plugin binary
+local.RegisterPluginDirectory("~/.xcl/plugins")         // a directory to search
+
+c, err := xcl.NewConfig(
+	xcl.WithRegistry(local),
+	xcl.WithStatePath("./.xcl"),
+)
+if err != nil {
+	return err
+}
+```
+
+Registering only records. None of the `Register` methods returns an error,
+and nothing is started, checked or searched until it is needed; see
+[How problems are reported](#how-problems-are-reported).
+
+### Declaring types
+
+`RegisterType` declares a Go type as a block type. The prototype is a pointer
+to a struct embedding `types.ResourceBase`, and the name is the block type with
+an optional subtype:
+
+```go title="main.go"
+local := registry.NewLocal()
+local.RegisterType(&Deployment{}, "deployment")           // deployment "api" {}
+local.RegisterType(&Service{}, "service")                 // service "api" {}
+local.RegisterType(&PostgreSQL{}, "resource", "postgres") // resource "postgres" "main" {}
+
+c, err := xcl.NewConfig(xcl.WithRegistry(local))
+if err != nil {
+	return err
+}
+```
+
+A declared type has no provider, so it is only ever decoded into. It still
+takes part in references, variables and modules, and is read back as your own
+Go type with `Find[T]`, `FindByType[T]` or `Decode`. Every type a
+configuration uses must be declared, even the ones the program never reads.
+
+`NewConfig` reads the declared types of every registry once, when the
+`Config` is created, and returns an error when they do not fit together; see
+[Clashes](#clashes).
+
+### Plugins
+
+- **`RegisterPlugin`** takes a plugin compiled into the program. It runs in
+  the same process, and is known by the name of its Go type, such as
+  `TemplatePlugin`.
+- **`RegisterExternalPlugin`** takes the path to a plugin binary, which xcl
+  starts as a separate process and talks to over gRPC. It is known by the
+  binary's file name, such as `xcl-plugin-docker`. A path that does not exist
+  is reported when plugins load, not here.
+- **`RegisterPluginDirectory`** takes a directory to search, when plugins
+  load, for executables whose names match the registry's pattern. A leading
+  `~/` is the home directory and environment variables are expanded. A
+  directory that does not exist provides no plugins and is not an error.
+
+A directory is searched for files named `xcl-plugin-*` by default. Give
+another pattern, as `filepath.Match` takes it, when the registry is created:
+
+```go title="main.go"
+local := registry.NewLocal(registry.PluginPattern("acme-plugin-*"))
+local.RegisterPluginDirectory("/opt/acme/plugins")
+```
+
+The pattern is fixed when the registry is created, so a later registration
+can not change what an earlier one matches.
+
+Each directory search is reported as `discover` events, whose `Meta` holds
+the `dirs` searched, the `registry` and, on success, the `count` of plugins
+found. Each plugin starting and being checked is reported as `load` events,
+whose `Meta` holds the `plugin`, its `registry` and, on success, the
+`block_types` it provides. See [Events and logging](/events/#operations-and-phases).
+
+## Configuration only, without state
+
+An application that only reads its configuration needs no plugins and no
+state. Declare its types on a local registry, and leave out
+`xcl.WithStatePath` and `xcl.WithStateStore`: nothing is persisted, the
+applied configuration is held in memory only, and every run reads the
+configuration afresh. This is a supported mode, not a fallback:
+
+```go title="main.go"
+local := registry.NewLocal()
+local.RegisterType(&Deployment{}, "deployment")
+local.RegisterType(&Service{}, "service")
+
+c, err := xcl.NewConfig(xcl.WithRegistry(local))
+if err != nil {
+	return err
+}
+
+if err := c.Apply("./config"); err != nil {
+	return err
+}
+
+var cfg appConfig
+if err := c.Decode(&cfg); err != nil {
+	return err
+}
+```
+
+The [configuration only example](/examples/configuration-only/) is a complete
+program built this way. Add a state option when a program needs to know, on
+its next run, what it applied on this one, as a program with providers does
+to update and destroy what it created.
+
+## Several registries and load order
+
+`xcl.WithRegistry` can be given any number of times. Registries are read in
+the order they were given, and their plugins load in that order; within a
+registry, plugins load in the order they were registered, with each
+directory's plugins at the point the directory was registered:
+
+```go title="main.go"
+builtin := registry.NewLocal()
+builtin.RegisterPlugin(&template.TemplatePlugin{})
+builtin.RegisterType(&Settings{}, "settings")
+
+user := registry.NewLocal()
+user.RegisterPluginDirectory("~/.xcl/plugins")
+
+c, err := xcl.NewConfig(
+	xcl.WithRegistry(builtin), // read and loaded first
+	xcl.WithRegistry(user),    // then this one
+)
+```
+
+Plugins load at the start of the first `Validate`, `Apply`, `Destroy`, `Diff`
+or `Load`, and only once per `Config`; later operations reuse them. The order
+decides only the order types are read, plugins load and events are emitted.
+It never decides which of two providers wins a block type, see
+[Clashes](#clashes).
+
+## How problems are reported
+
+Registration returns no errors. A problem is reported in one of three places,
+depending on when it can first be seen. Whatever order registration and
+loading happen in, each problem is reported in the same place.
+
+**A mistake in a single call panics at that call.** It is wrong on every run,
+so there is nothing for a caller to handle, and the stack trace points at the
+bad line. `RegisterType` panics, naming the type, for an empty name, more than
+one subtype, an empty subtype, or a prototype that is not a pointer to a
+struct embedding `types.ResourceBase`. `RegisterPlugin` panics for a nil
+plugin, and `WithRegistry` for a nil registry.
+
+**A clash between declared types is an error from `NewConfig`.** Declared Go
+types are known without loading anything, so `NewConfig` reads every
+registry's types and returns an error when they do not fit together: the same
+block type declared twice, in one registry or across two, a type keyword used
+both with and without a subtype, or a builtin's name. A clash between
+registries comes from how they are combined, not from one bad line, so it is
+an error rather than a panic:
+
+```go title="main.go"
+c, err := xcl.NewConfig(xcl.WithRegistry(local), xcl.WithRegistry(shared))
+
+var clash *xcl.TypeNameClashError
+if errors.As(err, &clash) {
+	fmt.Printf("%s: %s (%s) and %s (%s)\n",
+		clash.Name, clash.Existing, clash.ExistingRegistry, clash.Provider, clash.Registry)
+}
+```
+
+**A problem with plugins is an error from the first operation.** A plugin
+binary that is missing or broken, a plugin directory that can not be read, or
+a block type a plugin provides that something else already provides, depends
+on the machine or on what loads, so it is returned by the first `Validate`,
+`Apply`, `Destroy`, `Diff` or `Load`, the operation that loads plugins. Any
+plugin that fails to start fails the load, whether it was registered
+explicitly or found in a directory:
+
+```go title="main.go"
+err := c.Apply("./config")
+
+var loadErr *xcl.PluginLoadError
+if errors.As(err, &loadErr) {
+	fmt.Printf("plugin %q from registry %q: %s\n", loadErr.Plugin, loadErr.Registry, loadErr.Err)
+}
+```
+
+`*xcl.PluginLoadError` matches `xcl.ErrPluginLoad` with `errors.Is`. It names
+the `Plugin`, the `Registry` it came from, and the reason in `Err`. `Plugin` is
+empty when the registry itself could not provide its plugins, such as a
+directory that could not be searched. Loading runs once per `Config`, so a
+failed load is returned again by every later operation on the same `Config`.
+
+## Clashes
+
+Every block type, with its subtype where it has one, is provided once. A
+block type provided twice is an error, wherever the two come from, and is
+reported as a `*xcl.TypeNameClashError`:
+
+| Field | Meaning |
+|---|---|
+| `Name` | the clashing type, such as `resource.postgres`, or its type alone when it has no subtype |
+| `Provider`, `Registry` | what provides it a second time, a plugin or `type <Go type>` for a declared type, and the registry it came from |
+| `Existing`, `ExistingRegistry` | what already provides it, `builtin`, a plugin, or `type <Go type>` for a declared type, and its registry |
+
+Where the error comes from depends on what clashes:
+
+- **Two declared Go types**, in one registry or across two, or a declared type
+  with a builtin's name, are returned by `NewConfig`, naming both Go types and
+  their registries, or `builtin`. A declared type whose keyword is used in the
+  other form, with a subtype where it is used without one or the other way
+  round, is a `*xcl.TypeFormError` from `NewConfig`.
+- **A plugin and a declared type, a plugin and a builtin, or two plugins**, in
+  one registry or across two, are returned by the first operation that loads
+  plugins, naming both providers and their registries. A plugin that uses a
+  type keyword in the other form fails the load with a `*xcl.TypeFormError`.
+
+There is no precedence between registries, or between providers in one: a
+clash is an error whatever order they were given in, so adding a registry can
+never silently change which provider a configuration gets.
+
+## Writing your own registry
+
+A registry is anything that implements `registry.Registry`, so types and
+plugins can come from anywhere: a company plugin server, a cache filled on
+first use, or a fixed set built into a tool. The package defines the
+interfaces and the `Type` a registry declares:
+
+```go title="registry/registry.go"
+// Registry provides types and plugins to a Config. A Config uses every
+// registry given to it with xcl.WithRegistry, in that order.
+type Registry interface {
+	// Name identifies the registry in events and errors, i.e. "local" or
+	// "registry.xcl.dev"
+	Name() string
+
+	// Types returns the plain Go types this registry declares. It is read
+	// once, by NewConfig. A registry with no Go types returns nil.
+	Types() []Type
+
+	// Plugins returns the plugins this registry provides, fetching them first
+	// if it needs to. It is called once per Config, when plugins load.
+	Plugins(ctx context.Context, emit events.Emit) ([]Plugin, error)
+}
+
+// Type is a plain Go type declared as a block type. It has no provider: it
+// is only decoded into.
+type Type struct {
+	// Type is the block type, i.e. "deployment" or "resource"
+	Type string
+
+	// Subtype is the subtype, empty for a type declared without one
+	Subtype string
+
+	// Prototype is a pointer to a struct embedding types.ResourceBase, blocks
+	// of the type are decoded into new values of its Go type
+	Prototype any
+}
+
+// Plugin is one plugin a registry provides, ready to start
+type Plugin interface {
+	// Name identifies the plugin in events and errors
+	Name() string
+
+	// Start runs the plugin and returns the host xcl talks to it through
+	Start(emit events.Emit) (plugins.PluginHost, error)
+}
+```
+
+`Types` is read once, by `NewConfig`, and a registry with no Go types returns
+nil. `Plugins` is called once per `Config`, when plugins load, with an `emit` a
+registry can report its own progress through, as the local registry reports
+its directory searches as `discover` events; a nil `emit` is silent.
+
+A registry rarely needs to start a plugin itself. `registry.InProcess(p)`
+returns a `Plugin` for a plugin compiled into the program, and
+`registry.Executable(path)` one for a plugin binary, started over gRPC, the
+same two the local registry uses. As an illustration, here is a registry a
+tool might write for a fixed set of types and plugins it always ships with.
+It is not part of xcl:
+
+```go title="toolkit.go"
+// Toolkit provides the types and plugins every build of the tool ships with
+type Toolkit struct {
+	PluginDir string
+}
+
+func (t *Toolkit) Name() string {
+	return "toolkit"
+}
+
+func (t *Toolkit) Types() []registry.Type {
+	return []registry.Type{
+		{Type: "settings", Prototype: &Settings{}},
+		{Type: "resource", Subtype: "bucket", Prototype: &Bucket{}},
+	}
+}
+
+func (t *Toolkit) Plugins(ctx context.Context, emit events.Emit) ([]registry.Plugin, error) {
+	return []registry.Plugin{
+		registry.InProcess(&template.TemplatePlugin{}),
+		registry.Executable(filepath.Join(t.PluginDir, "xcl-plugin-docker")),
+	}, nil
+}
+```
+
+The types a registry returns from `Types` are checked by `NewConfig` like any
+declared with `RegisterType`, so a malformed one, or one that clashes, is an
+error from `NewConfig`. An error from `Plugins` fails the load as a
+`*xcl.PluginLoadError` with an empty `Plugin`, and an error from a plugin's
+`Start` as one naming that plugin. The registry's `Name` is what events and
+errors show as the `registry`.
+
+</Prose>
+
+<CtaBanner
+  heading="See it run"
+  body="The plugins example builds a local registry with an in-process plugin and an external plugin binary. The configuration only example declares its types on a local registry and keeps no state."
+>
+  <Button href="/examples/plugins/" label="Plugins example →" variant="primary" large />
+  <Button href="/examples/configuration-only/" label="Configuration only →" variant="secondary" large />
+</CtaBanner>

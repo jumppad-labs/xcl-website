@@ -17,7 +17,7 @@ import Button from "../components/Button.astro";
 
 Showing someone what a configuration holds is easiest in the syntax they
 wrote it in. `xcl.EncodeEntity` turns one entity back into configuration text,
-and `xcl.EncodeSavedEntity` does the same from its saved data. Both write
+and the Config's `EncodeSavedEntity` does the same from its saved data. Both write
 exactly one block, so convert several entities by calling once for each. Either
 can colour the text it writes, for a terminal or any other format.
 
@@ -57,18 +57,34 @@ configuration, and asking for one fails with `xcl.ErrNotEncodable`.
 
 ## Converting saved data
 
-`EncodeSavedEntity` takes an entity's saved data, in the form state stores it
-and events carry it at `xcl.EventDataProcessed`. It needs the registry, which is
-what types the record, and loads its plugins if they are not loaded already:
+`c.EncodeSavedEntity` takes an entity's saved data, in the form state stores it
+and events carry it at `xcl.EventDataProcessed`. The record's type is resolved
+through the Config, from the Go types its registries declare and the types
+its plugins provide, and its plugins are loaded if they are not loaded already:
 
 ```go
-text, err := xcl.EncodeSavedEntity(registry, event.Data)
+text, err := c.EncodeSavedEntity(event.Data)
 ```
 
 The text is identical to what `EncodeEntity` returns for the same entity. A
-record naming a type the registry does not know fails with
-`xcl.ErrUnregisteredType`, and data that is not one saved record with
-`xcl.ErrInvalidSavedData`.
+record naming a type the Config does not know fails with
+`xcl.ErrUnregisteredType`, data that is not one saved record with
+`xcl.ErrInvalidSavedData`, and a plugin that fails to load with
+`xcl.ErrPluginLoad`.
+
+An event receiver does not need the Config at all. `Event.Entity()` returns
+the entity an event carries, as the Go type registered for its block type and
+with every sensitive value masked, ready for `EncodeEntity`. It returns nil
+when the event carries no data:
+
+```go
+entity, err := e.Entity()
+if err != nil || entity == nil {
+	return
+}
+
+text, err := xcl.EncodeEntity(entity)
+```
 
 ## Provider-filled values
 
@@ -167,7 +183,7 @@ resource "app" "web" {
 ```
 
 It works the same from saved data,
-`xcl.EncodeSavedEntity(registry, record, xcl.ShowReferences())`, and the two
+`c.EncodeSavedEntity(record, xcl.ShowReferences())`, and the two
 give byte-identical text, since the references are kept in each entity's saved
 record. It combines with `xcl.IncludeComputed()`.
 

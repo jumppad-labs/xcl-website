@@ -189,48 +189,49 @@ detail, which is only added in-process (trimmed to the plugin's messages):
 
 ## Registering plugins
 
-The registry takes no logger, and registering a plugin only records it:
+Plugins come from registries. The local registry holds the plugins an
+application supplies itself, and registering a plugin only records it:
 
 ```go title="main.go"
-r := registry.NewPluginRegistry()
+local := registry.NewLocal()
+local.RegisterPlugin(&MyPlugin{})                 // an in-process plugin
+local.RegisterExternalPlugin("./bin/xcl-plugin-x") // an external plugin binary
+local.RegisterPluginDirectory("~/.xcl/plugins")    // a directory to search
 
-err := r.RegisterPlugin(&MyPlugin{})                  // an in-process plugin
-err = r.RegisterPluginWithPath("./bin/xcl-plugin-x") // an external plugin binary
-r.DiscoverPlugins([]string{"~/.xcl/plugins"}, "")    // directories to search
+c, err := xcl.NewConfig(xcl.WithRegistry(local))
 ```
 
-`RegisterPlugin` takes an in-process plugin, `RegisterPluginWithPath` the
-path to an external plugin binary, and `DiscoverPlugins(dirs, pattern)` the
-directories to search for plugin binaries. None of them starts, checks or
-searches anything.
+None of them starts, checks or searches anything, and none returns an error.
+Several registries, the order they load in, and writing a registry of your
+own are covered in [Registries](/registries/).
 
 ## Loading when first needed
 
-Plugins load at the start of the first `Validate`, `Apply`, `Destroy` or
-`Load`, and only once per registry, however many configs share it. An
-external plugin's process runs only while an operation is using it: xcl
-starts it for each operation and stops it when the operation is done. Discovery is reported
+Plugins load at the start of the first `Validate`, `Apply`, `Destroy`,
+`Diff` or `Load`, and only once per Config. An external plugin's process runs
+only while an operation is using it: xcl starts it for each operation and
+stops it when the operation is done. Searching a plugin directory is reported
 as `discover` events, and each plugin starting and being checked as `load`
-events, before the operation parses anything:
+events naming the plugin and its registry, before the operation parses
+anything:
 
 ```text
 3:53PM INFO apply start source=core operation=apply phase=start
-3:53PM INFO load start source=core operation=load phase=start plugin=TemplatePlugin
-3:53PM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin
-3:53PM INFO load start source=core operation=load phase=start plugin=docker-plugin
-3:53PM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin
+3:53PM INFO load start source=core operation=load phase=start plugin=TemplatePlugin registry=local
+3:53PM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin registry=local
+3:53PM INFO load start source=core operation=load phase=start plugin=docker-plugin registry=local
+3:53PM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin registry=local
 ```
-
-A discovered binary that turns out not to be a plugin is rejected, reported
-as a `load` error event with the detail `rejected=true`, and the rest carry
-on, unless every discovered plugin fails.
 
 ## When a plugin fails to load
 
-A registered plugin that fails to load, such as a path with no binary behind
-it, fails that first operation with an error matching `xcl.ErrPluginLoad`.
-Its detail, `*xcl.PluginLoadError`, names the plugin in `Plugin` and the
-reason in `Err`:
+Any plugin that fails to load fails that first operation, whether it was
+registered by name or found in a plugin directory. A path with no binary
+behind it, or a discovered file that is not a plugin, both fail the load with
+an error matching `xcl.ErrPluginLoad`. Its detail, `*xcl.PluginLoadError`,
+names the plugin in `Plugin`, the registry it came from in `Registry`, and
+the reason in `Err`. `Plugin` is empty when the registry itself could not
+provide its plugins, such as a plugin directory that could not be read.
 
 ```go title="example/plugin/main.go"
 func explainPluginLoad(err error) error {
@@ -246,20 +247,24 @@ Run as `xcl-docker apply --plugin ./build/missing ./config`, a Docker plugin
 path with no binary behind it, the example reports:
 
 ```text
-error: plugin ./build/missing failed to load: failed to get plugin client: fork/exec ./build/missing: no such file or directory, build it with `make build` in example/plugin
+error: plugin missing from registry local failed to load: unable to start plugin binary ./build/missing: failed to get plugin client: fork/exec ./build/missing: no such file or directory, build it with `make build` in example/plugin
 ```
 
 ## Type name clashes
 
-Every block type name is unique across xcl's builtins, types registered with
-`RegisterType` and the types plugins provide. When a clash is found depends
-on what can be known at the time:
+Every block type name is unique across xcl's builtins, the Go types
+registries declare and the types plugins provide. When a clash is found
+depends on what can be known at the time:
 
-- **`RegisterType` fails straight away** when the name is already taken by a
-  builtin, a registered type or a type from a plugin that has already loaded.
+- **Declared types are known when the Config is created,** so a declared type
+  that clashes is an error returned by `NewConfig`. Declaring the same type
+  twice, in one registry or across two, or a builtin's name, is a
+  `*xcl.TypeNameClashError` naming both Go types and their registries.
 - **A plugin's types are only known once it loads,** so a plugin type whose
   name clashes fails the load, and the operation that loaded it, with a
-  `*registry.TypeNameClashError` naming the type.
+  `*xcl.TypeNameClashError`. It names both providers and the registries they
+  came from. There is no precedence between plugins or registries, whichever
+  order they were given in.
 
 </Prose>
 

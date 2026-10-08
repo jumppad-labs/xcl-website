@@ -20,11 +20,13 @@ outside world, the application wants the values, with references, variables
 and modules resolved, as ordinary Go structs, and then acts on them.
 
 That is what this example is: a small program that reads its configuration
-into its own types and uses it. The block types are plain Go types registered
-on the plugin registry with `RegisterType`. xcl decodes each block into your
-type, resolves every reference in dependency order, and never calls a
-provider. A registered type needs nothing else: no plugin, no provider, no
-schema to write by hand.
+into its own types and uses it. The block types are plain Go types declared
+with `RegisterType` on a local registry, which is given to the Config when it
+is created. xcl decodes each block into your type, resolves every reference in
+dependency order, and never calls a provider. A declared type needs nothing
+else: no plugin, no provider, no schema to write by hand. Nothing is kept between runs either:
+without a state option xcl holds the applied configuration in memory only,
+which is all a program that only reads its configuration needs.
 
 The configuration is a small Kubernetes-like deployment, with the names a
 Kubernetes user would recognise rather than a literal translation of a
@@ -41,8 +43,8 @@ A block type is a struct embedding `types.ResourceBase`, which carries the
 common block metadata and the `depends_on` and `disabled` attributes.
 Anything nested inside a block is a plain struct: a block that appears once
 is a pointer, a block that repeats is a slice. The secret's data is a
-[sensitive value](/sensitive-values/), so it is masked in output and events
-and encrypted in state.
+[sensitive value](/sensitive-values/), so it is masked in output and events,
+and would be encrypted in state by a program that kept any.
 
 ```go title="example/configonly/resources/resources.go"
 // ConfigMap defines the block type `config_map`, a bag of values the
@@ -302,10 +304,10 @@ secret "db" {
 The program does three things: load the configuration into a struct of its
 own, work out the routes, and print them.
 
-`loadConfig` registers each Go type under the block type name used in
-configuration, applies the configuration and gathers it with one `Decode`
-call. Each slice field receives every block of its type, in the order the
-blocks were written, so the configuration can declare as many of each as it
+`loadConfig` declares each Go type under the block type name used in
+configuration, on a local registry it gives to the Config, applies the
+configuration and gathers it with one `Decode` call. Each slice field receives
+every block of its type, in the order the blocks were written, so the configuration can declare as many of each as it
 needs. The struct holds only what the program reads; reading a new block type
 is one new field, with no lookup code.
 
@@ -321,35 +323,22 @@ type appConfig struct {
 	Ingresses   []*resources.Ingress
 }
 
-// loadConfig registers the example's block types on r, applies the
-// configuration in dir with options added to the registry, and gathers it into
-// an appConfig.
-func loadConfig(dir string, r *registry.PluginRegistry, options ...xcl.ConfigOption) (*appConfig, error) {
-	// Register each Go type under the block type name used in configuration.
-	// A registered type needs nothing else: no plugin, no provider, no schema
-	// to write by hand. Every type the configuration declares must be
-	// registered, even the ones the program does not read.
-	if err := r.RegisterType(&resources.ConfigMap{}, "config_map"); err != nil {
-		return nil, err
-	}
+// loadConfig declares the example's block types, applies the configuration in
+// dir with the caller's options, and gathers it into an appConfig.
+func loadConfig(dir string, options ...xcl.ConfigOption) (*appConfig, error) {
+	// Declare each Go type under the block type name used in configuration,
+	// on a local registry. A declared type needs nothing else: no plugin, no
+	// provider, no schema to write by hand. Every type the configuration
+	// declares must be declared here, even the ones the program does not
+	// read.
+	local := registry.NewLocal()
+	local.RegisterType(&resources.ConfigMap{}, "config_map")
+	local.RegisterType(&resources.Secret{}, "secret")
+	local.RegisterType(&resources.Deployment{}, "deployment")
+	local.RegisterType(&resources.Service{}, "service")
+	local.RegisterType(&resources.Ingress{}, "ingress")
 
-	if err := r.RegisterType(&resources.Secret{}, "secret"); err != nil {
-		return nil, err
-	}
-
-	if err := r.RegisterType(&resources.Deployment{}, "deployment"); err != nil {
-		return nil, err
-	}
-
-	if err := r.RegisterType(&resources.Service{}, "service"); err != nil {
-		return nil, err
-	}
-
-	if err := r.RegisterType(&resources.Ingress{}, "ingress"); err != nil {
-		return nil, err
-	}
-
-	c, err := xcl.NewConfig(append([]xcl.ConfigOption{xcl.WithPluginRegistry(r)}, options...)...)
+	c, err := xcl.NewConfig(append([]xcl.ConfigOption{xcl.WithRegistry(local)}, options...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -369,34 +358,45 @@ func loadConfig(dir string, r *registry.PluginRegistry, options ...xcl.ConfigOpt
 }
 ```
 
-`loadConfig` takes its options from the caller. `main` keeps the state,
-encrypted with a fresh key, in a temporary directory, and sends xcl's
-[events](/events/) to the example's pretty terminal receiver. A test passes no
-options at all and loads the configuration the same way.
+`loadConfig` takes its options from the caller. `run` sends xcl's
+[events](/events/) to the example's pretty terminal receiver, and passes no
+state option, so nothing is written to disk. A test passes no options at all
+and loads the configuration the same way. With the routes worked out, `run`
+prints one line per route:
 
 ```go title="example/configonly/main.go"
-cfg, err := loadConfig(dir, r,
-	// Keep the state in a file
-	xcl.WithStatePath(stateDir),
-	// Encrypt sensitive values in the state, without a mask they are
-	// written in plain text and xcl warns about it
-	xcl.WithStateMask(masker),
-	// Every event xcl produces goes to the pretty receiver on stderr, so
-	// stdout holds only the routes
-	xcl.WithEventHandler(prettylog.Handler(os.Stderr, prettylog.LevelFromEnv(), r)),
-	// events carry nothing by default, this asks for each resource as
-	// state records it, which is what the receiver turns back into
-	// configuration text. Sensitive fields are redacted in events.
-	xcl.WithEventData(xcl.EventDataProcessed),
-)
-if err != nil {
-	return err
+// run loads the configuration in dir, works out its ingress routes and prints
+// one line per route.
+func run(dir string) error {
+	cfg, err := loadConfig(dir,
+		// Every event xcl produces goes to the pretty receiver on stderr, so
+		// stdout holds only the routes
+		xcl.WithEventHandler(prettylog.Handler(os.Stderr, prettylog.LevelFromEnv())),
+		// events carry nothing by default, this asks for each resource as it
+		// is processed, which is what the receiver turns back into
+		// configuration text. Sensitive fields are redacted in events.
+		xcl.WithEventData(xcl.EventDataProcessed),
+	)
+	if err != nil {
+		return err
+	}
+
+	routes, err := ingressRoutes(cfg)
+	if err != nil {
+		return err
+	}
+
+	for _, route := range routes {
+		fmt.Println(route)
+	}
+
+	return nil
 }
 ```
 
-The registry is built by the caller so the receiver can share it: it is what
-types the entity an event carries. xcl writes nothing unless a receiver is
-set.
+xcl writes nothing unless a receiver is set. The receiver needs nothing from
+the program but event data at `xcl.EventDataProcessed`: each event returns the
+entity it carries, typed by the Config that delivered it.
 
 `ingressRoutes` is the program's business logic, plain Go over the decoded
 types with no xcl calls. Because the configuration links the blocks by id, each
@@ -472,19 +472,6 @@ func findContainerPort(deployment *resources.Deployment, containerPort int) (con
 	}
 
 	return resources.Container{}, resources.Port{}, false
-}
-```
-
-`main` prints one line per route:
-
-```go title="example/configonly/main.go"
-routes, err := ingressRoutes(cfg)
-if err != nil {
-	return err
-}
-
-for _, route := range routes {
-	fmt.Println(route)
 }
 ```
 
@@ -621,7 +608,7 @@ data masked:
 3:25PM INFO apply success source=core operation=apply phase=success duration=6.934216ms
 ```
 
-No registered type has a provider, so each block goes straight to `create
+No declared type has a provider, so each block goes straight to `create
 success` with no `start` in between. The program's own output, on standard
 output, is one line per ingress path:
 
@@ -648,6 +635,9 @@ api.example.com/ -> service.api:80 -> deployment.api container api port http (80
   concurrently.
 - **Nesting is just Go.** `container[0].port[0]` in configuration is
   `Containers[0].Ports[0]` in Go, and an omitted block is nil.
+- **No state is kept.** The program passes no state option, so xcl writes
+  nothing to disk and every run reads the configuration afresh. See
+  [Registries](/registries/#configuration-only-without-state).
 - **One call gathers the configuration.** `Decode` fills the program's own
   struct by field type, so there is no lookup per block type, and a new block
   type needs only a new field.

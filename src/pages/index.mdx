@@ -89,11 +89,12 @@ resource "app" "web" {
   And read it back as your own Go type:
 
 ```go title="main.go"
-r := registry.NewPluginRegistry()
-r.RegisterType("postgres", &PostgreSQL{})
+// a plugin providing resource "postgres", with a provider that creates it
+local := registry.NewLocal()
+local.RegisterPlugin(&postgres.Plugin{})
 
 c, err := xcl.NewConfig(
-	xcl.WithPluginRegistry(r),
+	xcl.WithRegistry(local),
 	// optional, xcl writes nothing of its own without a receiver
 	xcl.WithEventHandler(events.SlogHandler(slog.Default())),
 )
@@ -168,9 +169,10 @@ fmt.Println(db.Location, db.Port)
   </FeatureCard>
 
   <FeatureCard icon="📝" title="Configuration only">
-    Not everything needs a lifecycle. `RegisterType` adds a plain Go type
-    with no plugin. It still takes part in references, modules and state, and
-    no provider is ever called.
+    Not everything needs a lifecycle. `RegisterType` declares a plain Go type
+    as a block type on a local registry, with no plugin and no state needed.
+    It still takes part in references and modules, and no provider is ever
+    called.
   </FeatureCard>
 
   <FeatureCard icon="💾" title="State, apply and destroy">

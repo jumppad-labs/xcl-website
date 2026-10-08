@@ -479,18 +479,20 @@ func render(t *Template) error {
 ## The program
 
 The program is `xcl-docker`, a command line tool built on xcl the way a real
-one would be. It has four commands, and each is a separate run of the
+one would be. It has five commands, and each is a separate run of the
 program:
 
 - `xcl-docker apply <path>` applies the configuration at `path`.
+- `xcl-docker plan <path>` prints what applying the configuration at `path`
+  would change, as a diff, without changing anything.
 - `xcl-docker status` prints what the saved state holds, as a tree.
 - `xcl-docker inspect <address>` prints one resource from the saved state as
   configuration text.
 - `xcl-docker destroy` removes everything in the saved state.
 
 `apply` and `destroy` print nothing of their own: the events they write to
-standard error end with the operation's success or error. `status` and
-`inspect` print only their output.
+standard error end with the operation's success or error. `plan`, `status`
+and `inspect` print only their output.
 
 The runs share nothing but the state, saved in `./.xcl-docker` unless
 `--state` names another directory. `xcl-docker` finds the Docker plugin next
@@ -507,6 +509,13 @@ package, and `main` passes the command to one function per command:
 		}
 
 		err = applyCommand(stderr, flags.Arg(0), *dockerPlugin, *stateDir)
+	case "plan":
+		if flags.NArg() != 1 {
+			fmt.Fprint(stderr, "plan needs the path of the configuration to compare\n\n"+usage)
+			return 2
+		}
+
+		err = planCommand(stdout, flags.Arg(0), *dockerPlugin, *stateDir)
 	case "status":
 		err = statusCommand(stdout, *dockerPlugin, *stateDir)
 	case "inspect":
@@ -524,31 +533,30 @@ package, and `main` passes the command to one function per command:
 	}
 ```
 
-Every command builds its `Config` the same way. Registering a plugin only
-records it. `RegisterPlugin` takes an in-process plugin and
-`RegisterPluginWithPath` an external plugin binary, and neither starts or
-checks anything. The plugins load at the start of the first operation, once
-per registry, and each brings its own block types with it, so nothing else
-needs registering. The state is kept in a file, which is how one run picks
-up what the last one saved:
+Every command builds its `Config` the same way. Plugins come from a
+registry, and the example uses the local registry, which holds the plugins an
+application supplies itself. Registering a plugin only records it.
+`RegisterPlugin` takes an in-process plugin and `RegisterExternalPlugin` the
+path to an external plugin binary, and neither starts or checks anything nor
+returns an error. `xcl.WithRegistry` gives the registry to the `Config`. The
+plugins load at the start of the first operation, once per `Config`, and each
+brings its own block types with it, so nothing else needs declaring. The
+state is kept in a file, which is how one run picks up what the last one
+saved:
 
 ```go title="example/plugin/main.go"
-func newConfig(r *registry.PluginRegistry, handler xcl.EventHandler, dockerPlugin, stateDir string) (*xcl.Config, error) {
-	// Register the in-process plugin, which provides every block type it
-	// registers in Init. Registering only records the plugin, it is loaded
-	// by the first operation.
-	if err := r.RegisterPlugin(&template.TemplatePlugin{}); err != nil {
-		return nil, err
-	}
-
-	// Register the external plugin binary, it is started by the first
-	// operation
-	if err := r.RegisterPluginWithPath(dockerPlugin); err != nil {
-		return nil, err
-	}
+func newConfig(handler xcl.EventHandler, dockerPlugin, stateDir string) (*xcl.Config, error) {
+	// The local registry holds plugins the application supplies itself: the
+	// in-process plugin, which provides every block type it registers in
+	// Init, and the external plugin binary. Registering only records a
+	// plugin, each is loaded, and the binary started, by the first operation
+	// that needs plugins.
+	local := registry.NewLocal()
+	local.RegisterPlugin(&template.TemplatePlugin{})
+	local.RegisterExternalPlugin(dockerPlugin)
 
 	return xcl.NewConfig(
-		xcl.WithPluginRegistry(r),
+		xcl.WithRegistry(local),
 		// Keep the state in a file, so each command, a separate run of the
 		// program, works from what the last one saved
 		xcl.WithStatePath(stateDir),
@@ -561,10 +569,19 @@ func newConfig(r *registry.PluginRegistry, handler xcl.EventHandler, dockerPlugi
 }
 ```
 
-`handler` is the receiver for xcl's [events](/events/). Each command passes
-it the example's pretty terminal receiver, writing to standard error at the
-level in `XCL_LOG_LEVEL`, info by default. The receiver shares the registry,
-which is how it shows each resource's
+`handler` is the receiver for xcl's [events](/events/). Each command that
+changes something passes it the example's pretty terminal receiver, writing
+to standard error at the level in `XCL_LOG_LEVEL`, info by default:
+
+```go title="example/plugin/main.go"
+func eventHandler(out io.Writer) xcl.EventHandler {
+	return prettylog.Handler(out, prettylog.LevelFromEnv())
+}
+```
+
+The receiver needs nothing else from the program. Each event returns the
+entity it carries with `Event.Entity()`, typed by the `Config` that delivered
+it, which is how the receiver shows each resource's
 [configuration](/configuration-text/) as it is created.
 
 `apply` checks that a Docker engine answers before it applies anything, so a
@@ -580,12 +597,7 @@ func applyCommand(stderr io.Writer, configDir, dockerPlugin, stateDir string) er
 		return err
 	}
 
-	// the registry is built here so that the event receiver can share it: it
-	// is what types the entity an event carries, which is how the receiver
-	// shows each resource's configuration as it is created
-	r := registry.NewPluginRegistry()
-
-	c, err := newConfig(r, eventHandler(stderr, r), dockerPlugin, stateDir)
+	c, err := newConfig(eventHandler(stderr), dockerPlugin, stateDir)
 	if err != nil {
 		return err
 	}
@@ -594,15 +606,70 @@ func applyCommand(stderr io.Writer, configDir, dockerPlugin, stateDir string) er
 }
 ```
 
+`plan` changes nothing either. It prints what applying a configuration would
+do to the saved state: each resource it would create, update, replace or
+delete, and each value that would change. It still needs Docker, so it checks
+an engine answers first: a [diff](/diff/) reads each resource in the state
+through its provider, as an apply would, so it also sees changes made to the
+real containers outside xcl. Like `status` it prints only its output, so it
+gives xcl no event handler:
+
+```go title="example/plugin/main.go"
+func planCommand(stdout io.Writer, configDir, dockerPlugin, stateDir string) error {
+	if err := client.Ping(context.Background()); err != nil {
+		return err
+	}
+
+	c, err := newConfig(nil, dockerPlugin, stateDir)
+	if err != nil {
+		return err
+	}
+
+	return plan(stdout, c, configDir)
+}
+```
+
+`plan` hands the configuration's path to `Config.Diff`, which compares it with
+the state and returns the changes without creating, changing or saving
+anything. `diff.Render` turns them into text, a block per changed resource and
+a summary line. As in `inspect`, below, colour is decided for the writer
+itself, so `diff.Highlight` is added only when the output is a terminal:
+
+```go title="example/plugin/plan.go"
+func plan(out io.Writer, c *xcl.Config, configDir string) error {
+	changes, err := c.Diff([]string{configDir})
+	if err != nil {
+		return explainPluginLoad(err)
+	}
+
+	var options []diff.RenderOption
+
+	// as with inspect, colour is decided for out itself, so a plan written to
+	// a file or a pipe is plain text
+	if lipgloss.NewRenderer(out).ColorProfile() != termenv.Ascii {
+		renderer, err := highlight.NewANSIRenderer()
+		if err != nil {
+			return err
+		}
+
+		options = append(options, diff.Highlight(renderer))
+	}
+
+	_, err = out.Write(diff.Render(changes, options...))
+
+	return err
+}
+```
+
 `status` applies nothing. `Load` reads the saved state into the `Config`
 without the configuration and without calling a provider, so the lookups
 answer from what `apply` saved. It loads the plugins first, because a saved
 plugin type is read back through its plugin's schema, but it never contacts
-Docker:
+Docker. It prints only the tree, so it gives xcl no event handler:
 
 ```go title="example/plugin/main.go"
 func statusCommand(stdout io.Writer, dockerPlugin, stateDir string) error {
-	c, err := newConfig(registry.NewPluginRegistry(), nil, dockerPlugin, stateDir)
+	c, err := newConfig(nil, dockerPlugin, stateDir)
 	if err != nil {
 		return err
 	}
@@ -687,9 +754,7 @@ func destroyCommand(stderr io.Writer, dockerPlugin, stateDir string) error {
 		return err
 	}
 
-	r := registry.NewPluginRegistry()
-
-	c, err := newConfig(r, eventHandler(stderr, r), dockerPlugin, stateDir)
+	c, err := newConfig(eventHandler(stderr), dockerPlugin, stateDir)
 	if err != nil {
 		return err
 	}
@@ -761,6 +826,13 @@ func requireDocker(t *testing.T) {
 	}
 }
 ```
+
+The `plan` tests in `plan_test.go` are among them. They apply the example
+configuration into a temporary state directory, then check that planning the
+same configuration reports no changes, that planning a copy with the
+template's source changed reports `template.welcome` as an update, and that
+planning saves nothing. One more checks that `plan` without a path fails with
+the usage, which needs no engine.
 
 ## Run it
 
@@ -911,6 +983,37 @@ Docker plugin to the template plugin:
 Welcome to the app network.
 The web container answers at http://10.42.0.2/
 ```
+
+Before destroying, `plan` shows what applying a changed configuration would
+do. Planning `./config` as it was applied prints only
+`Diff: no changes, 3 unchanged.` Copy it, change the template's source and
+bump the container's image to `nginx:1.28-alpine`, and plan the copy:
+
+```bash
+./build/xcl-docker plan ./changed
+```
+
+Example output, plain here and coloured in a terminal:
+
+```text
+  # docker.container.web will be updated
+  ~ docker "container" "web" {
+      ~ image = "nginx:1.27-alpine" -> "nginx:1.28-alpine"
+    }
+
+  # template.welcome will be updated
+  ~ template "welcome" {
+      ~ source               = "Welcome to the {{network}} network.\nThe web container answers at http://{{address}}/\n" -> "Hello from the {{network}} network.\nThe web container answers at http://{{address}}/\n"
+      ~ variables["address"] = "10.42.0.2" -> (known after apply)
+    }
+
+Diff: 0 to create, 2 to update, 0 to replace, 0 to delete, 1 unchanged.
+```
+
+The template's `address` is `(known after apply)` because it reads the
+container's `ip_address`, a computed value the Docker plugin sets when it
+updates the container. Nothing was changed or saved: the container still runs
+`nginx:1.27-alpine`, and planning `./config` again still reports no changes.
 
 After `destroy`, `status` prints `nothing applied`.
 
