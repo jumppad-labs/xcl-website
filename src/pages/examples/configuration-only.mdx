@@ -21,10 +21,10 @@ and modules resolved, as ordinary Go structs, and then acts on them.
 
 That is what this example is: a small program that reads its configuration
 into its own types and uses it. The block types are plain Go types declared
-with `xcl.WithType` when the Config is created. xcl decodes each block into
-your type, resolves every reference in dependency order, and never calls a
-provider. A declared type needs nothing else: no plugin, no registry, no
-provider, no schema to write by hand. Nothing is kept between runs either:
+with `RegisterType` on a local registry, which is given to the Config when it
+is created. xcl decodes each block into your type, resolves every reference in
+dependency order, and never calls a provider. A declared type needs nothing
+else: no plugin, no provider, no schema to write by hand. Nothing is kept between runs either:
 without a state option xcl holds the applied configuration in memory only,
 which is all a program that only reads its configuration needs.
 
@@ -305,9 +305,9 @@ The program does three things: load the configuration into a struct of its
 own, work out the routes, and print them.
 
 `loadConfig` declares each Go type under the block type name used in
-configuration, applies the configuration and gathers it with one `Decode`
-call. Each slice field receives every block of its type, in the order the
-blocks were written, so the configuration can declare as many of each as it
+configuration, on a local registry it gives to the Config, applies the
+configuration and gathers it with one `Decode` call. Each slice field receives
+every block of its type, in the order the blocks were written, so the configuration can declare as many of each as it
 needs. The struct holds only what the program reads; reading a new block type
 is one new field, with no lookup code.
 
@@ -326,19 +326,19 @@ type appConfig struct {
 // loadConfig declares the example's block types, applies the configuration in
 // dir with the caller's options, and gathers it into an appConfig.
 func loadConfig(dir string, options ...xcl.ConfigOption) (*appConfig, error) {
-	// Declare each Go type under the block type name used in configuration.
-	// A declared type needs nothing else: no plugin, no provider, no schema
-	// to write by hand. Every type the configuration declares must be
-	// declared here, even the ones the program does not read.
-	types := []xcl.ConfigOption{
-		xcl.WithType(&resources.ConfigMap{}, "config_map"),
-		xcl.WithType(&resources.Secret{}, "secret"),
-		xcl.WithType(&resources.Deployment{}, "deployment"),
-		xcl.WithType(&resources.Service{}, "service"),
-		xcl.WithType(&resources.Ingress{}, "ingress"),
-	}
+	// Declare each Go type under the block type name used in configuration,
+	// on a local registry. A declared type needs nothing else: no plugin, no
+	// provider, no schema to write by hand. Every type the configuration
+	// declares must be declared here, even the ones the program does not
+	// read.
+	local := registry.NewLocal()
+	local.RegisterType(&resources.ConfigMap{}, "config_map")
+	local.RegisterType(&resources.Secret{}, "secret")
+	local.RegisterType(&resources.Deployment{}, "deployment")
+	local.RegisterType(&resources.Service{}, "service")
+	local.RegisterType(&resources.Ingress{}, "ingress")
 
-	c, err := xcl.NewConfig(append(types, options...)...)
+	c, err := xcl.NewConfig(append([]xcl.ConfigOption{xcl.WithRegistry(local)}, options...)...)
 	if err != nil {
 		return nil, err
 	}

@@ -35,7 +35,7 @@ Outputs the static site to `dist/`. The deploy workflow at
 | `/` | `src/pages/index.mdx`: what xcl is and the features it adds to HCL |
 | `/events/` | `src/pages/events.mdx`: the event stream, delivery guarantees and connecting it to `log/slog` |
 | `/plugin-logging/` | `src/pages/plugin-logging.mdx`: logging from a provider, and when registered plugins load |
-| `/registries/` | `src/pages/registries.mdx`: declaring types with `WithType`, configuration without state, local and custom registries, load order, and how load problems and clashes are reported |
+| `/registries/` | `src/pages/registries.mdx`: the local registry, declaring types with `RegisterType`, configuration without state, custom registries, load order, and how load problems and clashes are reported |
 | `/sensitive-values/` | `src/pages/sensitive-values.mdx`: declaring sensitive fields, unwrapping them, and the errors when one meets a plain field |
 | `/state-masking/` | `src/pages/state-masking.mdx`: encrypting sensitive values in state, the reversible-only rule, the plaintext warning and the built-in maskers |
 | `/examples/application-config/` | `src/pages/examples/application-config.mdx` |

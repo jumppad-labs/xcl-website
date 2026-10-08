@@ -59,7 +59,7 @@ configuration, and asking for one fails with `xcl.ErrNotEncodable`.
 
 `c.EncodeSavedEntity` takes an entity's saved data, in the form state stores it
 and events carry it at `xcl.EventDataProcessed`. The record's type is resolved
-through the Config, from the types declared with `xcl.WithType` and the types
+through the Config, from the Go types its registries declare and the types
 its plugins provide, and its plugins are loaded if they are not loaded already:
 
 ```go

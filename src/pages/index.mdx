@@ -169,9 +169,10 @@ fmt.Println(db.Location, db.Port)
   </FeatureCard>
 
   <FeatureCard icon="📝" title="Configuration only">
-    Not everything needs a lifecycle. `WithType` declares a plain Go type as
-    a block type, with no plugin, no registry and no state needed. It still
-    takes part in references and modules, and no provider is ever called.
+    Not everything needs a lifecycle. `RegisterType` declares a plain Go type
+    as a block type on a local registry, with no plugin and no state needed.
+    It still takes part in references and modules, and no provider is ever
+    called.
   </FeatureCard>
 
   <FeatureCard icon="💾" title="State, apply and destroy">

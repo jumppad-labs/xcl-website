@@ -252,13 +252,14 @@ error: plugin missing from registry local failed to load: unable to start plugin
 
 ## Type name clashes
 
-Every block type name is unique across xcl's builtins, the types declared
-with `xcl.WithType` and the types plugins provide. When a clash is found
+Every block type name is unique across xcl's builtins, the Go types
+registries declare and the types plugins provide. When a clash is found
 depends on what can be known at the time:
 
-- **A declared type that clashes panics,** because it is a mistake in the
-  code that is wrong on every run. Declaring the same type twice with
-  `WithType`, or a builtin's name, panics in `NewConfig`.
+- **Declared types are known when the Config is created,** so a declared type
+  that clashes is an error returned by `NewConfig`. Declaring the same type
+  twice, in one registry or across two, or a builtin's name, is a
+  `*xcl.TypeNameClashError` naming both Go types and their registries.
 - **A plugin's types are only known once it loads,** so a plugin type whose
   name clashes fails the load, and the operation that loaded it, with a
   `*xcl.TypeNameClashError`. It names both providers and the registries they
