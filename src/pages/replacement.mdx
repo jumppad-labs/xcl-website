@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/Shell.astro
 title: "Unchanged, update or replace - xcl"
-description: "A provider's Changed answers entity.NoChange, entity.Update or entity.Replace, and is told which of its dependencies the same apply updates or replaces. How xcl decides every resource before acting, destroys replacements first, and shows it all in the plan."
+description: "A provider's Changed answers entity.NoChange, entity.Update or entity.Replace, and with Update is told which of its settings changed and which of its dependencies the same apply updates or replaces. How xcl decides every resource before acting, destroys replacements first, and shows it all in the plan."
 ---
 import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
@@ -10,7 +10,7 @@ import Button from "../components/Button.astro";
 
 <Hero
   heading="Unchanged, update or replace"
-  sub="A provider decides what applying new configuration needs for each of its resources: leave it alone, change it in place, or destroy it and create it again. It is told which of its dependencies are changing, and xcl makes every decision before it changes anything."
+  sub="A provider decides what applying new configuration needs for each of its resources: leave it alone, change it in place, or destroy it and create it again. It is told which of its settings and dependencies are changing, and xcl makes every decision before it changes anything."
 />
 
 <Prose>
@@ -22,15 +22,20 @@ its `Changed` method answers one of three outcomes, and xcl does the rest.
 
 ## What Changed answers
 
-`Changed` is part of every `plugins.ResourceProvider[T]`:
+`Changed` is part of every `plugins.ResourceProvider[T]`, alongside the
+`Update` it leads to:
 
 ```go title="plugins/provider.go"
-Changed(ctx context.Context, old T, new T, dependencies []entity.DependencyChange) (entity.Change, error)
+Changed(ctx context.Context, old T, new T, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error)
+Update(ctx context.Context, resource T, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (T, error)
 ```
 
 `old` is the resource as saved by the last apply. `new` is the current
 configuration after it has been through `Read`, so it holds both configuration
-edits and drift observed in the real resource. `dependencies` is covered
+edits and drift observed in the real resource. `changes` lists the settings
+that differ from the last apply, covered
+[below](#what-a-resource-is-told-about-its-settings), and `dependencies` the
+dependencies that change with it, covered
 [below](#what-a-resource-is-told-about-its-dependencies). The answer is an
 `entity.Change`:
 
@@ -48,7 +53,7 @@ const (
 | Answer | What the apply does |
 | --- | --- |
 | `entity.NoChange` | Leaves the resource alone. It is saved as `Read` returned it and keeps its status. |
-| `entity.Update` | Calls the provider's `Update` with the new configuration. `Update` is only ever called for this answer. |
+| `entity.Update` | Calls the provider's `Update` with the new configuration, the settings that changed and the same dependency list. `Update` is only ever called for this answer. |
 | `entity.Replace` | Calls `Destroy` on the saved resource, then `Create` with the new configuration. |
 
 An error from `Changed`, or from the `Read` before it, fails the whole apply or
@@ -72,7 +77,8 @@ type MyProvider struct {
 }
 ```
 
-`DefaultChanged` ignores `dependencies` and never answers `entity.Replace`.
+`DefaultChanged` ignores both `changes` and `dependencies` and never answers
+`entity.Replace`.
 A provider that cannot change some settings in place, or that must react to a
 replaced dependency, defines its own `Changed` and defers to `DefaultChanged`
 for everything else, as the Docker example [below](#a-worked-example-docker)
@@ -117,6 +123,89 @@ replaced, its provider is still asked. The saved value stands in for the
 unknown one, and the resource is planned as at least an update; the provider
 can still answer replace.
 
+`Update` is given the same list, recorded while deciding, so a provider that
+answered update because of a dependency knows which one when it acts.
+
+## What a resource is told about its settings
+
+The `changes` argument lists the settings of the resource that differ between
+the last apply and the configuration, one `entity.PropertyChange` each:
+
+```go title="entity/property_change.go"
+type PropertyChange struct {
+	// Path is where the setting is, in configuration names, for example
+	// network[0].name.
+	Path Path
+	// Before is the previous value, nil when the setting was added.
+	Before any
+	// After is the new value, nil when the setting was removed or when
+	// Unknown is set.
+	After any
+	// Unknown is set when the new value is only known once the apply runs. It
+	// is only ever set for Changed, never for Update.
+	Unknown bool
+	// Sensitive is set when the setting is sensitive. Before and After still
+	// hold the real values.
+	Sensitive bool
+}
+```
+
+- **The plan's own list.** xcl works the list out with the same comparison of
+  the saved copy against the configured one that the [plan](/diff/) shows, so
+  a provider is told exactly the settings the plan lists, at the same paths.
+  It describes the configuration: drift that `Read` finds in the real resource
+  is not in it, it is in the difference between `old` and `new`.
+- **Not yet known while deciding.** When `Changed` is called, a new value that
+  is only known once the apply runs, such as a computed value of a dependency
+  being created or replaced, has `Unknown` set and a nil `After`.
+- **Real values when updating.** `Update` is given the comparison run again
+  with every value known, including values produced earlier in the same
+  apply. A setting that was unknown while deciding stays listed with its real
+  value, even when it turns out the same as before, so the list always matches
+  what the plan showed.
+- **Sensitive values are real.** A sensitive setting's change holds its real
+  values in `Before` and `After`, so the provider can act on them. The change
+  masks them itself: printing it, logging it or encoding it to JSON shows
+  `(sensitive)` in their place. Plans, events and logs never show them. See
+  [Sensitive values](/sensitive-values/).
+- **Plain JSON values.** `Before` and `After` hold `string`, `float64`,
+  `bool`, `nil`, `[]any` or `map[string]any`, never the provider's Go types: a
+  number is a `float64` and a nested block a `map[string]any`. They are the
+  same whether the plugin runs in-process or as a separate program.
+- **Lists by position, maps by key.** A list setting is compared element by
+  element at its position, so a change is at `network[0].name`, `command[2]`
+  or `network[0].aliases[1]`. A map entry is at its quoted key, such as
+  `environment["LOG_LEVEL"]`. An added or removed list element or map key is
+  one change holding the whole value, with a nil `Before` when it was added
+  and a nil `After` when it was removed.
+
+An empty list means none of the resource's own settings changed.
+
+A `Path` is a list of steps, built with `Attribute`, `Index` and `Key`. Match a
+change with `At`, for a change exactly at a path, or `Within`, for a change at
+a path or anywhere inside it:
+
+```go title="entity/property_change.go"
+// At returns true when the change is exactly at path.
+func (c PropertyChange) At(path Path) bool {
+	return c.Path.Equal(path)
+}
+
+// Within returns true when the change is at path or anywhere inside it, so a
+// change at network[0].name is within network.
+func (c PropertyChange) Within(path Path) bool {
+	return c.Path.Within(path)
+}
+```
+
+so `change.Within(entity.Path{}.Attribute("network"))` matches `network`,
+`network[0]`, `network[0].name` and `network[1].aliases[0]` alike.
+
+Whatever `Update`, `Create` or `Read` returns is authoritative for the
+resource's computed values. xcl clears them before it decodes the result, so a
+computed value the provider leaves out, such as an `omitempty` address it
+cleared, is cleared rather than kept from the last apply.
+
 ## Decide, then act
 
 Both `Apply` and `Diff` (the plan) run the same decide pass first. Every
@@ -153,48 +242,164 @@ leaves everything else to `DefaultChanged`:
 // Changed answers replace when the subnet changes: Docker can not move a
 // network to a new address range, the network has to be removed and created
 // again. Any other change is left to DefaultChanged.
-func (p *networkProvider) Changed(ctx context.Context, old *Network, new *Network, dependencies []entity.DependencyChange) (entity.Change, error) {
+func (p *networkProvider) Changed(ctx context.Context, old *Network, new *Network, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
 	if old.Subnet != new.Subnet {
 		return entity.Replace, nil
 	}
 
-	return p.DefaultChanged.Changed(ctx, old, new, dependencies)
+	return p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
 }
 ```
 
-The container provider reads its dependency list. A container attached to a
-replaced network would be left on a network that no longer exists, so any
-replaced dependency means the container is replaced too. Its image, command,
-environment and networks are fixed when Docker creates it, so a change to any
-of them is also a replacement:
+The container provider decides only from what it is told. Docker fixes a
+container's image, command, environment and mounts when it creates it, so a
+change within `image`, `command`, `environment` or `init_script` is a
+replacement. So is a replaced dependency that isn't a Docker network: the init
+script is `template.init.destination`, and when that template is replaced the
+container that mounts it is replaced too. Any other change to its own
+settings, such as a `network` block added, removed or given new aliases,
+answers update, and so does a network it depends on being updated or
+replaced. A dependency that is only updated, such as the init template
+rendering new content to the same file, is left to `DefaultChanged`, which
+leaves the container alone:
 
 ```go title="example/plugin/plugins/docker/resources/container.go"
-// Changed answers replace when a resource the container depends on is
-// replaced, such as the network it is attached to, since the container would
-// be left attached to a network that no longer exists. It also answers replace
-// when the image, command, environment or networks change: Docker fixes them
-// when it creates a container. Any other change is left to DefaultChanged.
-func (p *containerProvider) Changed(ctx context.Context, old *Container, new *Container, dependencies []entity.DependencyChange) (entity.Change, error) {
+// replaceSettings are the settings Docker fixes when it creates a container,
+// a change to any of them needs a new container
+var replaceSettings = []entity.Path{
+	entity.Path{}.Attribute("image"),
+	entity.Path{}.Attribute("command"),
+	entity.Path{}.Attribute("environment"),
+	entity.Path{}.Attribute("init_script"),
+}
+
+// Changed decides from what it is told. It answers replace when the image,
+// command, environment or init script changed, since Docker fixes them when
+// it creates a container, or when a dependency other than a Docker network is
+// replaced, such as the template that renders the init script. A change to
+// the container's networks, or a network that is updated or replaced, is
+// handled in place by Update, which moves the running container between
+// networks. Any other change to its settings answers update. A dependency
+// that is only updated, such as the init script's template rendering new
+// content, leaves the container alone: the decision is left to
+// DefaultChanged.
+func (p *containerProvider) Changed(ctx context.Context, old *Container, new *Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
+	for _, change := range changes {
+		for _, setting := range replaceSettings {
+			if change.Within(setting) {
+				return entity.Replace, nil
+			}
+		}
+	}
+
 	for _, dependency := range dependencies {
-		if dependency.Change == entity.Replace {
+		if dependency.Change == entity.Replace && !isNetworkAddress(dependency.Address) {
 			return entity.Replace, nil
 		}
 	}
 
-	if old.Image != new.Image ||
-		!equalStrings(old.Command, new.Command) ||
-		!equalEnvironment(old.Environment, new.Environment) ||
-		!equalAttachments(old.Networks, new.Networks) {
-		return entity.Replace, nil
+	if len(changes) > 0 {
+		return entity.Update, nil
 	}
 
-	return p.DefaultChanged.Changed(ctx, old, new, dependencies)
+	for _, dependency := range dependencies {
+		if isNetworkAddress(dependency.Address) {
+			return entity.Update, nil
+		}
+	}
+
+	return p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
 }
 ```
 
-Both providers' `Update` returns the resource unchanged: every setting Docker
-cannot change in place answers replace, so `Update` is only reached for changes
-that need no Docker call.
+The container's `Update` moves the running container between networks, again
+working only from what it is told. `resource` is the configuration as it is
+now and `changes` is how it got there, so putting back each network change's
+`Before` rebuilds the `network` blocks the container had after the last
+apply, without asking Docker. It disconnects the networks that went away or
+whose aliases changed, connects the new ones, connects again every network
+whose dependency was replaced, and reads the container's new address once if
+anything moved:
+
+```go title="example/plugin/plugins/docker/resources/container.go"
+func (p *containerProvider) Update(ctx context.Context, c *Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (*Container, error) {
+	previous, err := previousAttachments(c.Networks, changes)
+	if err != nil {
+		return nil, fmt.Errorf("unable to work out the previous networks of container %s: %w", c.Meta.Name, err)
+	}
+
+	moved := false
+
+	for _, attachment := range previous {
+		current, ok := findAttachment(c.Networks, attachment.Name)
+		if ok && equalStrings(current.Aliases, attachment.Aliases) {
+			continue
+		}
+
+		// a network that was removed or rebuilt has already detached it
+		err := p.client.NetworkDisconnect(ctx, attachment.Name, c.DockerID, true)
+		if err != nil && !dockerclient.IsErrNotFound(err) {
+			return nil, fmt.Errorf("unable to disconnect container %s from network %s: %w", c.Meta.Name, attachment.Name, err)
+		}
+
+		plugins.Logger(ctx).Info("disconnected container from network", "name", c.Meta.Name, "network", attachment.Name)
+		moved = true
+	}
+
+	connected := map[string]bool{}
+	for _, attachment := range c.Networks {
+		before, ok := findAttachment(previous, attachment.Name)
+		if ok && equalStrings(before.Aliases, attachment.Aliases) {
+			continue
+		}
+
+		if err := p.connect(ctx, c, attachment); err != nil {
+			return nil, err
+		}
+
+		connected[attachment.Name] = true
+		moved = true
+	}
+
+	for _, dependency := range dependencies {
+		if dependency.Change != entity.Replace || !isNetworkAddress(dependency.Address) {
+			continue
+		}
+
+		attachment, ok := findAttachment(c.Networks, networkName(dependency.Address))
+		if !ok || connected[attachment.Name] {
+			continue
+		}
+
+		if err := p.connect(ctx, c, attachment); err != nil {
+			return nil, err
+		}
+
+		connected[attachment.Name] = true
+		moved = true
+	}
+
+	if !moved {
+		return c, nil
+	}
+
+	inspect, err := p.client.ContainerInspect(ctx, c.DockerID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to inspect container %s: %w", c.Meta.Name, err)
+	}
+
+	c.IPAddress = firstAddress(c, inspect)
+
+	return c, nil
+}
+```
+
+The hot swap has a companion in the network's `Destroy`. Docker refuses to
+remove a network that still has containers attached, and a replaced network
+is destroyed before its dependents are updated, so `Destroy` inspects the
+network and force-disconnects every attached container before removing it.
+The container's `Update` then attaches it to the network that replaces it,
+which is why it connects again to every replaced network.
 
 The example's `config-subnet` directory is its main configuration with the
 network's subnet changed from `10.42.0.0/24` to `10.42.0.0/23`:
@@ -203,37 +408,33 @@ network's subnet changed from `10.42.0.0/24` to `10.42.0.0/23`:
 docker "network" "app" {
   subnet = "10.42.0.0/23"
 }
-
-docker "container" "web" {
-  image = "nginx:1.27-alpine"
-
-  network {
-    name    = docker.network.app.meta.name
-    aliases = ["web"]
-  }
-}
 ```
 
-Applying it after the main configuration:
+The container, still on `docker.network.app` and mounting
+`template.init.destination` as its `init_script`, is unchanged. Applying it
+after the main configuration:
 
 1. The network is asked first. Its subnet changed, so it answers replace.
-2. The container is asked with `docker.network.app` listed as a replaced
-   dependency, so it answers replace, although its own configuration did not
-   change.
-3. The template that reads the container's `ip_address` cannot know the new
-   address until the container is created, so it is planned as an update.
-4. The container is destroyed, then the network. The network is created on the
-   new subnet, then the container on it, then the template is updated with
-   the container's new address.
+2. The init template's variables read only the network's name, which does
+   not change, so it is unchanged.
+3. The container is asked with no changes of its own and
+   `docker.network.app` listed as a replaced dependency. A network is not a
+   reason to replace it, so it answers update.
+4. The template that reads the container's `ip_address` cannot know the
+   address until the container is updated, so it is planned as an update.
+5. The network is destroyed, force-disconnecting the container, and created
+   on the new subnet. The container's `Update` is told the network was
+   replaced and connects it again, keeping the same container and its ID,
+   then the template is updated with its address.
 
 ## How the plan shows it
 
-The plan says which resources are replaced and why, in a comment above each
-`-/+` header. This is the real plan for the change above:
+The plan says which resources are replaced or updated and why, in a comment
+above each header. This is the real plan for the change above:
 
 ```text
-  # docker.container.web will be replaced because docker.network.app is replaced
--/+ docker "container" "web" {}
+  # docker.container.web will be updated because docker.network.app is replaced
+  ~ docker "container" "web" {}
 
   # docker.network.app will be replaced, it cannot be updated in place
 -/+ docker "network" "app" {
@@ -245,10 +446,11 @@ The plan says which resources are replaced and why, in a comment above each
       ~ variables["address"] = "10.42.0.2" -> (known after apply)
     }
 
-Diff: 0 to create, 1 to update, 2 to replace, 0 to delete, 0 unchanged.
+Diff: 0 to create, 2 to update, 1 to replace, 0 to delete, 1 unchanged.
 ```
 
-The reason is one of three:
+The container has no changes of its own, so the plan names the dependencies
+behind its update. A replacement's reason is one of three:
 
 | Comment | Why |
 | --- | --- |
@@ -256,19 +458,27 @@ The reason is one of three:
 | `will be replaced because a, b are replaced` | it was told about replaced dependencies and answered replace |
 | `will be replaced, its last apply failed` | it was saved `failed` or `destroy_failed`, and its provider was not asked |
 
-In a diff, a replaced resource's `Reason` and `ReplacedDeps` carry the same
-information as data. A plan after the apply shows `Diff: no changes, 3 unchanged.`
-See [Diffs](/diff/) for reading a plan from Go and rendering it.
+The plugins example's `config-init` shows the second: moving the init
+script's destination replaces `template.init`, and the container that mounts
+it answers replace,
+`# docker.container.web will be replaced because template.init is replaced`.
+
+In a diff, a replaced resource's `Reason` and `ReplacedDeps`, and an updated
+resource's `Dependencies`, carry the same information as data. A plan after
+the apply shows `Diff: no changes, 4 unchanged.` See [Diffs](/diff/) for
+reading a plan from Go and rendering it.
 
 Run it yourself with `make replace` in `example/plugin` (it needs Docker): it
 applies the main configuration, shows the plan for `config-subnet`, applies it
-and destroys everything again.
+and destroys everything again. `make swap`, `make rebuild-init` and
+`make remove-network` walk through the other variants the same way.
 
 ## External plugins
 
 A plugin running as a separate binary makes the same decisions over the
-plugin protocol. The request carries the dependency list, and the response
-carries the answer:
+plugin protocol, and is told exactly what an in-process one is. The requests
+carry the changed settings and the dependency list, and the response carries
+the answer:
 
 ```protobuf title="plugins/plugin.proto"
 enum Change {
@@ -282,12 +492,37 @@ message DependencyChange {
   Change change = 2;
 }
 
+enum StepKind {
+  STEP_KIND_ATTRIBUTE = 0;
+  STEP_KIND_INDEX = 1;
+  STEP_KIND_KEY = 2;
+}
+
+message PathStep {
+  StepKind kind = 1;
+  string attribute = 2;
+  int64 index = 3;
+  string key = 4;
+}
+
+// PropertyChange is one setting that differs between the last apply and the
+// new configuration, see entity.PropertyChange. before and after hold JSON
+// values; empty means the value is absent.
+message PropertyChange {
+  repeated PathStep path = 1;
+  bytes before = 2;
+  bytes after = 3;
+  bool unknown = 4;
+  bool sensitive = 5;
+}
+
 message ChangedRequest {
   string entity_type = 1;
   string entity_sub_type = 2;
   bytes old_entity_data = 3;
   bytes new_entity_data = 4;
   repeated DependencyChange dependencies = 5;
+  repeated PropertyChange changes = 6;
 }
 
 message ChangedResponse {
@@ -296,21 +531,34 @@ message ChangedResponse {
   string error = 2;
   Change change = 3;
 }
+
+message UpdateRequest {
+  string entity_type = 1;
+  string entity_sub_type = 2;
+  bytes entity_data = 3;
+  repeated PropertyChange changes = 4;
+  repeated DependencyChange dependencies = 5;
+}
 ```
 
-A plugin author writes the same Go `Changed` either way; the plugin SDK does
-the translation. An unknown `Change` value is an error on either side.
+A plugin author writes the same Go `Changed` and `Update` either way; the
+plugin SDK does the translation. An unknown `Change` value is an error on
+either side. Each `before` and `after` travels as the JSON bytes of the value,
+encoded on its own rather than through the change's masking JSON form, so
+sensitive values arrive real and every value decodes to the same plain JSON
+value an in-process provider receives.
 
-Plugins built against the earlier protocol, where `Changed` answered a yes or
-no, must be rebuilt. An old plugin's answer reads as no change, so its
-resources would never be updated. A provider that only embeds `DefaultChanged`
-needs nothing more than a rebuild.
+Plugins built against an earlier protocol must be rebuilt. One built before
+`Changed` answered an outcome rather than a yes or no reads as no change, so
+its resources would never be updated, and one built before the changes were
+added is never told them. A provider that only embeds `DefaultChanged` needs
+its `Update` given the new parameters and a rebuild.
 
 </Prose>
 
 <CtaBanner
   heading="See it run"
-  body="The plugins example's Docker network and container answer replace, and make replace walks through the plan and apply against Docker."
+  body="The plugins example's Docker network is replaced while its container is updated in place, and make replace walks through the plan and apply against Docker."
 >
   <Button href="/examples/plugins/" label="Plugins example →" variant="primary" large />
   <Button href="/diff/" label="Diffs →" variant="secondary" large />

@@ -71,7 +71,7 @@ Each resource an apply would change gets exactly one action:
 | Action | When |
 |---|---|
 | `create` | It is in the configuration but not in the saved state, or its provider reports that the real resource no longer exists. |
-| `update` | Its provider reports a change it can make in place, or one of its values is only known after apply. |
+| `update` | Its provider reports a change it can make in place, or one of its values is only known after apply. `Dependencies` names the resources behind it that the same apply updates or replaces, as its provider was told about them. |
 | `replace` | An apply would destroy it and create it again, for one of the reasons below. |
 | `delete` | It is in the saved state but no longer in the configuration. |
 
@@ -95,7 +95,12 @@ the summary but not listed. Only resources an apply hands to a provider take
 part: variables, outputs, modules and disabled blocks are neither listed nor
 counted.
 
-An update can have no changes. That happens when the provider reports that the
+An update can have no changes of its own. Most often that is because a
+resource it depends on is updated or replaced, and its provider answered
+update for it, such as a container reattached to a replaced network. Its
+`Dependencies` then lists those resources, sorted by address, each with its
+`Address` and `Action`, and the rendering names them. Only an update with
+neither changes nor dependencies is one where the provider reports that the
 real resource differs from what was saved, but no configured value changed:
 something changed it outside xcl, and an apply would update it.
 
@@ -146,6 +151,9 @@ for each reason:
   # resource.container.cache changed outside xcl and will be updated
   ~ resource "container" "cache" {}
 
+  # resource.container.proxy will be updated because resource.network.app is replaced
+  ~ resource "container" "proxy" {}
+
   # resource.container.web will be created
   + resource "container" "web" {
       + image   = "nginx"
@@ -166,14 +174,18 @@ for each reason:
   # resource.postgres.old will be deleted
   - resource "postgres" "old" {}
 
-Diff: 1 to create, 2 to update, 3 to replace, 1 to delete, 4 unchanged.
+Diff: 1 to create, 3 to update, 3 to replace, 1 to delete, 4 unchanged.
 ```
 
 Each resource starts with a comment saying what an apply would do with it,
 followed by its block header, marked with the action. For a replacement the
 comment also says why: its last apply failed, it cannot be updated in place,
 or the resources it depends on that are replaced, named one by one, as for
-`resource.container.worker` above. Inside the block there is one line for
+`resource.container.worker` above. An update with no changes of its own names
+the dependencies behind it in the same way, as for `resource.container.proxy`,
+or `A, B are replaced and C is updated` when there are several. Only an update
+with neither changes nor dependencies says it `changed outside xcl and will be
+updated`, as for `resource.container.cache`. Inside the block there is one line for
 each change, with the `=` signs lined up. Resources appear in the result's order, which is sorted by address. A resource with no changes is
 written as a header with an empty body.
 
@@ -239,12 +251,17 @@ written form, such as `"ports[0].host"`. Values that are absent, such as the
 values of a sensitive change that was not revealed, are left out. A
 replacement carries its `reason`, and one replaced because of its
 dependencies also lists them in `replaced_dependencies`. Both are left out for
-every other action:
+every other action. An update lists the dependencies behind it in
+`dependencies`, each with its `address` and `action`, left out when there are
+none:
 
 ```json
 {
-  "summary": { "create": 1, "update": 0, "replace": 2, "delete": 0, "unchanged": 4 },
+  "summary": { "create": 1, "update": 1, "replace": 2, "delete": 0, "unchanged": 4 },
   "resources": [
+    { "address": "resource.container.proxy", "action": "update",
+      "dependencies": [ { "address": "resource.network.app",
+                          "action": "replace" } ] },
     { "address": "resource.container.web", "action": "create",
       "changes": [ { "path": "image", "after": "nginx" },
                    { "path": "db_host", "unknown": true } ] },

@@ -23,10 +23,11 @@ in **plugins**, and a plugin provides as many block types as it likes.
 
 On each apply, xcl first `Read`s every resource it saved last time and asks
 its provider's `Changed` whether to leave it alone, `Update` it in place or
-replace it. A replacement is a `Destroy` followed by a `Create`, and
-`Changed` is told which of the resources a block depends on the same apply
-will update or replace, so a provider can replace a resource whose
-dependency is replaced. Every resource is decided before anything changes,
+replace it. A replacement is a `Destroy` followed by a `Create`. `Changed`
+and `Update` are both told which of the resource's settings changed since the
+last apply, and which of the resources it depends on the same apply will
+update or replace, so a provider can decide, and act, from exactly what
+changed. Every resource is decided before anything changes,
 then the replaced ones are destroyed, dependents first, and finally
 resources are created and updated in dependency order. See
 [Unchanged, update or replace](/replacement/) for the full rules.
@@ -37,10 +38,14 @@ plugins that do real work:
 - **The Docker plugin** is an external plugin, compiled to its own binary,
   `docker-plugin`. xcl starts it as a separate process and calls it over
   gRPC. It provides `docker "network"` and `docker "container"`, and creates
-  real Docker networks and containers through the Docker Engine SDK.
+  real Docker networks and containers through the Docker Engine SDK. It
+  updates a running container's networks in place, moving it between networks
+  and reattaching it to a network that was replaced, without creating a new
+  container.
 - **The template plugin** is an in-process plugin, `TemplatePlugin`,
   compiled into the program. It provides `template`, a block type with no
-  subtype, and renders a Handlebars template to a file.
+  subtype, and renders a Handlebars template to a file. Here it renders the
+  script the container runs when it starts, as well as a welcome file.
 
 Because the Docker plugin creates real containers, the example needs a Docker
 engine, reached through `DOCKER_HOST` or the default socket. The source is in
@@ -55,8 +60,9 @@ in-process template provider, which writes it into the rendered file.
 
 ## The configuration
 
-The configuration is a network, a container on it, and a template that
-describes where the container can be reached:
+The configuration is a network, an init script rendered by a template, a
+container on the network that runs the script when it starts, and a template
+that describes where the container can be reached:
 
 ```hcl title="example/plugin/config/main.xcl"
 # The configuration the plugin example applies. The docker blocks come from
@@ -66,7 +72,7 @@ describes where the container can be reached:
 # Variables can be overridden with environment variables prefixed HCL_VAR_,
 # i.e. HCL_VAR_output_dir.
 
-# output_dir is where the rendered template is written
+# output_dir is where the rendered templates are written
 variable "output_dir" {
   default = "./build/rendered"
 }
@@ -77,10 +83,34 @@ docker "network" "app" {
   subnet = "10.42.0.0/24"
 }
 
+# A script the web container runs when it starts. The mode makes it
+# executable, which the nginx image needs before it runs a script from its
+# entrypoint directory. Editing the source renders the file again and leaves
+# the container alone; moving the destination replaces the template, and with
+# it the container that mounts the script.
+template "init" {
+  source = <<-EOF
+  #!/bin/sh
+  echo "web joined the {{network}} network" > /usr/share/nginx/html/init.txt
+  EOF
+
+  destination = "${variable.output_dir}/init.sh"
+  mode        = "0755"
+
+  variables = {
+    network = docker.network.app.meta.name
+  }
+}
+
 # An nginx container named web on the app network. Referring to the network
 # orders the blocks, web is always created after app and destroyed before it.
+# Changing its networks moves the running container in place; changing its
+# image, command, environment or init script creates a new one.
 docker "container" "web" {
   image = "nginx:1.27-alpine"
+
+  # mounted into the nginx entrypoint directory, run when the container starts
+  init_script = template.init.destination
 
   # a nested block, repeated once per network the container joins
   network {
@@ -114,7 +144,8 @@ Each block type is a Go struct embedding `types.ResourceBase`. The container
 has two computed fields, `docker_id` and `ip_address`, marked `computed` in
 their tags. They can not be set in configuration, only a provider can fill
 them in. Its nested `network` block is a slice of `NetworkAttachment`, one
-entry for each `network` block the container has:
+entry for each `network` block the container has, and its optional
+`init_script` is the path of a script it runs when it starts:
 
 ```go title="example/plugin/plugins/docker/resources/container.go"
 // Container defines the block type docker "container", a Docker container
@@ -132,6 +163,12 @@ type Container struct {
 	// Environment holds the container's environment variables
 	Environment map[string]string `xcl:"environment,optional" json:"environment,omitempty"`
 
+	// InitScript is the path of a script the container runs when it starts,
+	// mounted read-only into the nginx image's entrypoint directory. It is
+	// usually a template's destination, so replacing that template replaces
+	// the container.
+	InitScript string `xcl:"init_script,optional" json:"init_script,omitempty"`
+
 	// Networks are the networks the container joins, one nested network block
 	// each. The container is created on the first and connected to the rest.
 	Networks []NetworkAttachment `xcl:"network,block" json:"network,omitempty"`
@@ -142,7 +179,6 @@ type Container struct {
 	// IPAddress is computed, the container's address on its first network
 	IPAddress string `xcl:"ip_address,optional,computed" json:"ip_address,omitempty"`
 }
-
 // NetworkAttachment is a nested network block of a docker "container" block
 type NetworkAttachment struct {
 	// Name is the Docker name of the network, i.e. docker.network.app.meta.name
@@ -227,6 +263,7 @@ type Docker interface {
 	NetworkInspect(ctx context.Context, networkID string, options network.InspectOptions) (network.Inspect, error)
 	NetworkRemove(ctx context.Context, networkID string) error
 	NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error
+	NetworkDisconnect(ctx context.Context, networkID, containerID string, force bool) error
 
 	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
 	ImagePull(ctx context.Context, ref string, options image.PullOptions) (io.ReadCloser, error)
@@ -247,7 +284,8 @@ A provider is typed on the block's Go type, so every method receives a
 for a bridge network named after the block, labelled so the objects the
 example made can be found with `docker network ls`, and records the ID Docker
 gives it in the computed `DockerID`. `Destroy` removes the network by that
-ID. The provider embeds `DefaultChanged`, which answers update whenever the
+ID, force-disconnecting any container still attached first, since Docker
+refuses to remove a network with active endpoints. The provider embeds `DefaultChanged`, which answers update whenever the
 configured values differ, and overrides `Changed` for the one thing Docker
 cannot change in place, as [Update or replace](#update-or-replace) below
 shows.
@@ -287,9 +325,37 @@ func (p *networkProvider) Create(ctx context.Context, n *Network) (*Network, err
 }
 
 // Destroy removes the network, a network that is already gone counts as
-// removed
+// removed. Every container still attached is force-disconnected first, so
+// rebuilding a network never fails on its active endpoints; the container's
+// own Update attaches it again to the network that replaces this one.
 func (p *networkProvider) Destroy(ctx context.Context, n *Network, force bool) error {
-	err := p.client.NetworkRemove(ctx, n.DockerID)
+	inspect, err := p.client.NetworkInspect(ctx, n.DockerID, network.InspectOptions{})
+	if dockerclient.IsErrNotFound(err) {
+		plugins.Logger(ctx).Info("network already removed", "name", n.Meta.Name, "id", n.DockerID)
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("unable to inspect network %s: %w", n.Meta.Name, err)
+	}
+
+	// sorted, so the containers are always detached in the same order
+	attached := make([]string, 0, len(inspect.Containers))
+	for containerID := range inspect.Containers {
+		attached = append(attached, containerID)
+	}
+	sort.Strings(attached)
+
+	for _, containerID := range attached {
+		err := p.client.NetworkDisconnect(ctx, n.DockerID, containerID, true)
+		if err != nil && !dockerclient.IsErrNotFound(err) {
+			return fmt.Errorf("unable to disconnect container %s from network %s: %w", containerID, n.Meta.Name, err)
+		}
+
+		plugins.Logger(ctx).Info("disconnected container from network", "name", n.Meta.Name, "container", containerID)
+	}
+
+	err = p.client.NetworkRemove(ctx, n.DockerID)
 	if err != nil && !dockerclient.IsErrNotFound(err) {
 		return fmt.Errorf("unable to remove network %s: %w", n.Meta.Name, err)
 	}
@@ -301,8 +367,8 @@ func (p *networkProvider) Destroy(ctx context.Context, n *Network, force bool) e
 ```
 
 The container provider's `Create` does more. It pulls the image when Docker
-does not have it, creates the container on its first network, then starts it
-and inspects it for its address. The two computed fields are only set once
+does not have it, creates the container on its first network with its init
+script mounted, then starts it and inspects it for its address. The two computed fields are only set once
 everything has worked, and a container that was created but failed to start
 is removed again, so a failed `Create` leaves nothing behind:
 
@@ -332,7 +398,12 @@ func (p *containerProvider) Create(ctx context.Context, c *Container) (*Containe
 		}
 	}
 
-	resp, err := p.client.ContainerCreate(ctx, config, &container.HostConfig{}, networking, nil, c.Meta.Name)
+	hostConfig, err := initScriptMount(c.InitScript)
+	if err != nil {
+		return nil, fmt.Errorf("unable to mount the init script of container %s: %w", c.Meta.Name, err)
+	}
+
+	resp, err := p.client.ContainerCreate(ctx, config, hostConfig, networking, nil, c.Meta.Name)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create container %s: %w", c.Meta.Name, err)
 	}
@@ -348,6 +419,32 @@ func (p *containerProvider) Create(ctx context.Context, c *Container) (*Containe
 	plugins.Logger(ctx).Info("created container", "name", c.Meta.Name, "image", c.Image, "ip_address", c.IPAddress)
 
 	return c, nil
+}
+```
+
+The init script is bind-mounted read-only into the nginx image's entrypoint
+directory, where nginx runs every executable script before it starts, so the
+container runs it each time it starts:
+
+```go title="example/plugin/plugins/docker/resources/container.go"
+// initScriptPath is where the init script is mounted. The nginx image's
+// entrypoint runs every executable script in /docker-entrypoint.d before it
+// starts nginx.
+const initScriptPath = "/docker-entrypoint.d/90-xcl-init.sh"
+
+// initScriptMount returns the host configuration that mounts script
+// read-only at initScriptPath, none when there is no script
+func initScriptMount(script string) (*container.HostConfig, error) {
+	if script == "" {
+		return &container.HostConfig{}, nil
+	}
+
+	path, err := filepath.Abs(script)
+	if err != nil {
+		return nil, err
+	}
+
+	return &container.HostConfig{Binds: []string{path + ":" + initScriptPath + ":ro"}}, nil
 }
 ```
 
@@ -381,7 +478,7 @@ func (p *containerProvider) startContainer(ctx context.Context, c *Container, id
 
 ### Update or replace
 
-`DefaultChanged` never answers replace, but most of what a Docker network or
+`DefaultChanged` never answers replace, but some of what a Docker network or
 container is made from is fixed when Docker creates it. So both providers
 override `Changed`. A network cannot move to a new address range, so a new
 `subnet` replaces it, and anything else is left to `DefaultChanged`:
@@ -390,49 +487,181 @@ override `Changed`. A network cannot move to a new address range, so a new
 // Changed answers replace when the subnet changes: Docker can not move a
 // network to a new address range, the network has to be removed and created
 // again. Any other change is left to DefaultChanged.
-func (p *networkProvider) Changed(ctx context.Context, old *Network, new *Network, dependencies []entity.DependencyChange) (entity.Change, error) {
+func (p *networkProvider) Changed(ctx context.Context, old *Network, new *Network, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
 	if old.Subnet != new.Subnet {
 		return entity.Replace, nil
 	}
 
-	return p.DefaultChanged.Changed(ctx, old, new, dependencies)
+	return p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
 }
 ```
 
-The container uses its `dependencies`. They list the resources it depends on
-that this apply will update or replace, here the network its `network` block
-names. When the network is replaced, the container would be left attached to
-a network that no longer exists, so it is replaced too. A new image, command,
-environment or set of networks also replaces it, because Docker fixes them
-when it creates a container:
+The container decides only from what it is told: `changes`, the settings
+that differ from the last apply, and `dependencies`, the resources it depends
+on that this apply will update or replace. Docker fixes a container's image,
+command, environment and mounts when it creates it, so a change within
+`image`, `command`, `environment` or `init_script` replaces it. So does a
+replaced dependency that isn't a Docker network: the init script is
+`template.init.destination`, and when that template is replaced the container
+that mounts it is replaced too. Any other change to its own settings, such as
+a `network` block added, removed or given new aliases, answers update, and so
+does a network it depends on being updated or replaced. A dependency that is
+only updated, such as the init template rendering new content to the same
+file, is left to `DefaultChanged`, which leaves the container alone:
 
 ```go title="example/plugin/plugins/docker/resources/container.go"
-// Changed answers replace when a resource the container depends on is
-// replaced, such as the network it is attached to, since the container would
-// be left attached to a network that no longer exists. It also answers replace
-// when the image, command, environment or networks change: Docker fixes them
-// when it creates a container. Any other change is left to DefaultChanged.
-func (p *containerProvider) Changed(ctx context.Context, old *Container, new *Container, dependencies []entity.DependencyChange) (entity.Change, error) {
+// replaceSettings are the settings Docker fixes when it creates a container,
+// a change to any of them needs a new container
+var replaceSettings = []entity.Path{
+	entity.Path{}.Attribute("image"),
+	entity.Path{}.Attribute("command"),
+	entity.Path{}.Attribute("environment"),
+	entity.Path{}.Attribute("init_script"),
+}
+
+// Changed decides from what it is told. It answers replace when the image,
+// command, environment or init script changed, since Docker fixes them when
+// it creates a container, or when a dependency other than a Docker network is
+// replaced, such as the template that renders the init script. A change to
+// the container's networks, or a network that is updated or replaced, is
+// handled in place by Update, which moves the running container between
+// networks. Any other change to its settings answers update. A dependency
+// that is only updated, such as the init script's template rendering new
+// content, leaves the container alone: the decision is left to
+// DefaultChanged.
+func (p *containerProvider) Changed(ctx context.Context, old *Container, new *Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
+	for _, change := range changes {
+		for _, setting := range replaceSettings {
+			if change.Within(setting) {
+				return entity.Replace, nil
+			}
+		}
+	}
+
 	for _, dependency := range dependencies {
-		if dependency.Change == entity.Replace {
+		if dependency.Change == entity.Replace && !isNetworkAddress(dependency.Address) {
 			return entity.Replace, nil
 		}
 	}
 
-	if old.Image != new.Image ||
-		!equalStrings(old.Command, new.Command) ||
-		!equalEnvironment(old.Environment, new.Environment) ||
-		!equalAttachments(old.Networks, new.Networks) {
-		return entity.Replace, nil
+	if len(changes) > 0 {
+		return entity.Update, nil
 	}
 
-	return p.DefaultChanged.Changed(ctx, old, new, dependencies)
+	for _, dependency := range dependencies {
+		if isNetworkAddress(dependency.Address) {
+			return entity.Update, nil
+		}
+	}
+
+	return p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
 }
 ```
 
-With every Docker setting answering replace, both providers' `Update` methods
-return the resource unchanged: they are only reached for changes that need
-no Docker call, such as xcl's own metadata.
+`Update` moves the running container between networks, working only from
+what it is told, never from what Docker reports. `c` is the configuration as
+it is now and `changes` is how it got there, so `previousAttachments`, in
+`attachments.go`, puts back each network change's `Before` to rebuild the `network` blocks the
+container had after the last apply. `Update` disconnects the networks that
+went away or whose aliases changed, connects the new ones, connects again
+every network whose dependency was replaced, and reads the container's new
+address once if anything moved:
+
+```go title="example/plugin/plugins/docker/resources/container.go"
+// Update moves the running container between networks, working only from what
+// it is told, never from what Docker reports:
+//
+//   - the previous attachments are the configured ones with each network
+//     change's previous value put back
+//   - networks that went away, or whose aliases changed, are disconnected
+//   - networks that are new, or whose aliases changed, are connected
+//   - networks that were replaced are connected again, since destroying a
+//     network detaches every container
+//
+// When it moved the container it reads the container's new address, an
+// output, not previous state.
+func (p *containerProvider) Update(ctx context.Context, c *Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (*Container, error) {
+	previous, err := previousAttachments(c.Networks, changes)
+	if err != nil {
+		return nil, fmt.Errorf("unable to work out the previous networks of container %s: %w", c.Meta.Name, err)
+	}
+
+	moved := false
+
+	for _, attachment := range previous {
+		current, ok := findAttachment(c.Networks, attachment.Name)
+		if ok && equalStrings(current.Aliases, attachment.Aliases) {
+			continue
+		}
+
+		// a network that was removed or rebuilt has already detached it
+		err := p.client.NetworkDisconnect(ctx, attachment.Name, c.DockerID, true)
+		if err != nil && !dockerclient.IsErrNotFound(err) {
+			return nil, fmt.Errorf("unable to disconnect container %s from network %s: %w", c.Meta.Name, attachment.Name, err)
+		}
+
+		plugins.Logger(ctx).Info("disconnected container from network", "name", c.Meta.Name, "network", attachment.Name)
+		moved = true
+	}
+
+	connected := map[string]bool{}
+	for _, attachment := range c.Networks {
+		before, ok := findAttachment(previous, attachment.Name)
+		if ok && equalStrings(before.Aliases, attachment.Aliases) {
+			continue
+		}
+
+		if err := p.connect(ctx, c, attachment); err != nil {
+			return nil, err
+		}
+
+		connected[attachment.Name] = true
+		moved = true
+	}
+
+	for _, dependency := range dependencies {
+		if dependency.Change != entity.Replace || !isNetworkAddress(dependency.Address) {
+			continue
+		}
+
+		attachment, ok := findAttachment(c.Networks, networkName(dependency.Address))
+		if !ok || connected[attachment.Name] {
+			continue
+		}
+
+		if err := p.connect(ctx, c, attachment); err != nil {
+			return nil, err
+		}
+
+		connected[attachment.Name] = true
+		moved = true
+	}
+
+	if !moved {
+		return c, nil
+	}
+
+	inspect, err := p.client.ContainerInspect(ctx, c.DockerID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to inspect container %s: %w", c.Meta.Name, err)
+	}
+
+	c.IPAddress = firstAddress(c, inspect)
+
+	return c, nil
+}
+```
+
+Destroying a network detaches every container, so a network that is replaced
+leaves the container on nothing until `Update` connects it again. The
+network's `Destroy`, shown [above](#the-providers), force-disconnects every
+container still attached before it removes the network, because Docker
+refuses to remove a network with active endpoints, and the container's
+`Update` then attaches it to the network that replaces it.
+
+The network's own `Update` returns it unchanged: every setting Docker cannot
+change in place answers replace in its `Changed`, so it is only reached for
+changes that need no Docker call.
 
 ### The external binary
 
@@ -459,7 +688,8 @@ func main() {
 The template plugin is compiled into the program. Its block type has no
 subtype: `Init` registers `template` with an empty subtype, so a block is
 written `template "welcome" {}`, with just a name, and addressed
-`template.welcome`. xcl names an in-process plugin after its Go type, so its
+`template.welcome`. The example has two: `template.init` renders the
+container's init script and `template.welcome` the welcome file. xcl names an in-process plugin after its Go type, so its
 log lines come from `TemplatePlugin`.
 
 ```go title="example/plugin/plugins/template/plugin.go"
@@ -511,23 +741,28 @@ removes the file at the old path:
 // destroyed, removing its file, and created again. A change to the source or
 // variables is left to DefaultChanged, which answers update, and Update
 // renders the file again.
-func (p *provider) Changed(ctx context.Context, old *Template, new *Template, dependencies []entity.DependencyChange) (entity.Change, error) {
+func (p *provider) Changed(ctx context.Context, old *Template, new *Template, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
 	if old.Destination != new.Destination {
 		return entity.Replace, nil
 	}
 
-	return p.DefaultChanged.Changed(ctx, old, new, dependencies)
+	return p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
 }
 ```
 
 `render` parses the source with the Handlebars library xcl's own template
-function uses, with the same `quote` and `trim` helpers, and executes it with
-the block's variables:
+function uses, with the same `quote` and `trim` helpers, executes it with the
+block's variables and writes the file with the block's `mode`:
 
 ```go title="example/plugin/plugins/template/template.go"
 // render renders t's source with its variables and writes it to its
-// destination, creating the destination's parent directories
+// destination with its mode, creating the destination's parent directories
 func render(t *Template) error {
+	mode, err := fileMode(t.Mode)
+	if err != nil {
+		return err
+	}
+
 	tmpl, err := raymond.Parse(t.Source)
 	if err != nil {
 		return fmt.Errorf("unable to parse template: %w", err)
@@ -555,14 +790,84 @@ func render(t *Template) error {
 		return fmt.Errorf("unable to create the directory for %s: %w", t.Destination, err)
 	}
 
-	err = os.WriteFile(t.Destination, []byte(out), 0644)
+	err = os.WriteFile(t.Destination, []byte(out), mode)
 	if err != nil {
 		return fmt.Errorf("unable to write %s: %w", t.Destination, err)
+	}
+
+	// WriteFile only sets the mode of a file it creates, a file rendered
+	// before keeps its old mode otherwise
+	err = os.Chmod(t.Destination, mode)
+	if err != nil {
+		return fmt.Errorf("unable to set the mode of %s: %w", t.Destination, err)
 	}
 
 	return nil
 }
 ```
+
+A template's optional `mode` sets the rendered file's permissions as an octal
+string, `"0644"` when it is left out. The init script needs `"0755"`: the
+nginx image only runs an executable script from its entrypoint directory.
+
+```go title="example/plugin/plugins/template/template.go"
+// Template defines the block type template, a Handlebars template rendered to
+// a file
+type Template struct {
+	types.ResourceBase `xcl:",remain"`
+
+	// Source is the Handlebars template text, use file() to read it from a
+	// file
+	Source string `xcl:"source" json:"source"`
+
+	// Destination is the path of the file the template is rendered to, its
+	// parent directories are created when they do not exist
+	Destination string `xcl:"destination" json:"destination"`
+
+	// Variables are the values the template refers to, i.e. {{address}}
+	Variables map[string]string `xcl:"variables,optional" json:"variables,omitempty"`
+
+	// Mode is the rendered file's permissions as an octal string, i.e.
+	// "0755" for a script that is run. It defaults to "0644".
+	Mode string `xcl:"mode,optional" json:"mode,omitempty"`
+}
+```
+
+The `template "init"` block in the configuration renders the script with that
+mode, and the container's `init_script` reads its destination:
+
+```hcl title="example/plugin/config/main.xcl"
+template "init" {
+  source = <<-EOF
+  #!/bin/sh
+  echo "web joined the {{network}} network" > /usr/share/nginx/html/init.txt
+  EOF
+
+  destination = "${variable.output_dir}/init.sh"
+  mode        = "0755"
+
+  variables = {
+    network = docker.network.app.meta.name
+  }
+}
+
+docker "container" "web" {
+  image = "nginx:1.27-alpine"
+
+  # mounted into the nginx entrypoint directory, run when the container starts
+  init_script = template.init.destination
+
+  ...
+}
+```
+
+Because the container reads `template.init.destination`, the template is a
+dependency of the container. Editing the script's source renders the file
+again in place: the template is updated, and the container, told only that a
+dependency was updated, is left alone. Moving the destination replaces the
+template, and the container, told that a dependency that isn't a network was
+replaced, is replaced with it, so the new container mounts the script from
+its new path.
 
 ## The program
 
@@ -923,16 +1228,28 @@ planning saves nothing. One more checks that `plan` without a path fails with
 the usage, which needs no engine.
 
 The address range change has tests of its own. The unit tests check each
-provider's `Changed` against a mock, such as a new subnet answering replace.
-Against a real engine, `main_test.go` applies `./config` and then
+provider's `Changed` and `Update` against a mock, such as a new subnet
+answering replace, a replaced network answering update for the container, and
+an `Update` told the network was replaced connecting the container to it
+again. Against a real engine, `main_test.go` applies `./config` and then
 `./config-subnet` to the same state directory, and checks that the real
 network Docker reports has the new range `10.42.0.0/23` and that the old
-network is gone, that the container is a new one, running and attached to the
-new network, that the template was rendered again with the new container's
+network is gone, that the container keeps its Docker ID, running and attached
+to the new network, that the template was rendered again with the container's
 address, and that planning `./config-subnet` afterwards reports no changes.
 `plan_test.go` checks the plan of `./config-subnet` after `./config`: the
-network replaced because it cannot be updated in place, the container
-replaced because the network is, and the template updated.
+network replaced because it cannot be updated in place, the container updated
+because the network is replaced, and the template updated.
+
+`scenarios_test.go` runs the other variants the same way, each applied after
+`./config` against real Docker. Moving the container to a new network keeps
+the same running container, now on `backend` and off `app`. Moving the init
+script's destination creates a new container with the moved script mounted,
+while editing the script's content keeps the same container and renders the
+new content. Removing the network deletes it and leaves the same container
+running with no network and no saved address. Removing only the network,
+while the container still names it, fails validation and changes nothing.
+After each, planning the variant again reports no changes.
 
 ## Run it
 
@@ -958,35 +1275,48 @@ the Docker plugin started as a process, each reporting the block types it
 provides:
 
 ```text
-11:37AM INFO apply start source=core operation=apply phase=start
-11:37AM INFO load start source=core operation=load phase=start plugin=TemplatePlugin
-11:37AM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin
-11:37AM INFO load start source=core operation=load phase=start plugin=docker-plugin
-11:37AM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin
+9:16AM INFO apply start source=core operation=apply phase=start
+9:16AM INFO load start source=core operation=load phase=start plugin=TemplatePlugin registry=local
+9:16AM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin registry=local
+9:16AM INFO load start source=core operation=load phase=start plugin=docker-plugin registry=local
+9:16AM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin registry=local
 ```
 
-Then the lifecycle runs. Here is the container and the template, trimmed
-from the full run. After each `create success` the receiver prints the
-resource as configuration text, with the values the provider set marked:
+Then the lifecycle runs. Here are the init template, the container and the
+welcome template, trimmed from the full run. After each `create success` the
+receiver prints the resource as configuration text, with the values the
+provider set marked:
 
 ```text
-11:37AM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config/main.xcl
-11:37AM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.2 name=web
-11:37AM INFO create success source=core operation=create phase=success resource=docker.container.web type=container.web file=config/main.xcl duration=199.005204ms
+9:16AM INFO create start source=core operation=create phase=start resource=template.init type=template.init file=config/main.xcl
+9:16AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.init type=template.init file=config/main.xcl destination=./build/rendered/init.sh
+9:16AM INFO create success source=core operation=create phase=success resource=template.init type=template.init file=config/main.xcl duration=154.421µs
+  template "init" {
+    source      = "#!/bin/sh\necho \"web joined the {{network}} network\" > /usr/share/nginx/html/init.txt\n"
+    destination = "./build/rendered/init.sh"
+    variables = {
+      network = "app"
+    }
+    mode = "0755"
+  }
+9:16AM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config/main.xcl
+9:16AM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.2 name=web
+9:16AM INFO create success source=core operation=create phase=success resource=docker.container.web type=container.web file=config/main.xcl duration=272.641998ms
   docker "container" "web" {
-    image = "nginx:1.27-alpine"
+    image       = "nginx:1.27-alpine"
+    init_script = "./build/rendered/init.sh"
 
     network {
       name    = "app"
       aliases = ["web"]
     }
 
-    docker_id  = "84afde72343a5f882468c0735b3c5c2ef4e55a5694adb1678fe3e668154fa76f" # set by the provider
+    docker_id  = "ccc41ac142a180c52a0f9ecfbd2fe2ae66850ef79d4004b34dace51acd2419eb" # set by the provider
     ip_address = "10.42.0.2" # set by the provider
   }
-11:37AM INFO create start source=core operation=create phase=start resource=template.welcome type=template.welcome file=config/main.xcl
-11:37AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
-11:37AM INFO create success source=core operation=create phase=success resource=template.welcome type=template.welcome file=config/main.xcl duration=127.391µs
+9:16AM INFO create start source=core operation=create phase=start resource=template.welcome type=template.welcome file=config/main.xcl
+9:16AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
+9:16AM INFO create success source=core operation=create phase=success resource=template.welcome type=template.welcome file=config/main.xcl duration=121.441µs
   template "welcome" {
     source      = "Welcome to the {{network}} network.\nThe web container answers at http://{{address}}/\n"
     destination = "./build/rendered/welcome.txt"
@@ -995,7 +1325,7 @@ resource as configuration text, with the values the provider set marked:
       network = "app"
     }
   }
-11:37AM INFO apply success source=core operation=apply phase=success duration=210.746466ms
+9:16AM INFO apply success source=core operation=apply phase=success duration=288.028674ms
 ```
 
 Each provider call is a `start` and a `success` from `core`, xcl itself, and
@@ -1003,19 +1333,22 @@ anything the provider logs arrives between them. The provider's message
 carries the plugin as its `source`, `TemplatePlugin` in-process and
 `docker-plugin` for the binary, and the `resource`, `type`, `file` and step
 (`operation`) of the call it was logged in, although the provider passed only
-the message and its own details. The template's `address` is the
-`ip_address` the Docker plugin logged a moment earlier.
+the message and its own details. The init script is rendered before the
+container that mounts it is created, and the welcome template's `address` is
+the `ip_address` the Docker plugin logged a moment earlier.
 
 The destroy runs the same providers in reverse dependency order: the
-template first, then the container, then the network it was on (trimmed to the
-provider messages and the overall start and success):
+welcome template first, then the container, then the init template it
+mounted, then the network (trimmed to the provider messages and the overall
+start and success):
 
 ```text
-11:37AM INFO destroy start source=core operation=destroy phase=start
-11:37AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
-11:37AM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/main.xcl name=web
-11:37AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=61668d4b88e48699ea1dfb4f6a2878ff0aa3e8242a953fc63dae494132b5e7ea name=app
-11:37AM INFO destroy success source=core operation=destroy phase=success duration=376.741086ms
+9:16AM INFO destroy start source=core operation=destroy phase=start
+9:16AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
+9:16AM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/main.xcl name=web
+9:16AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.init type=template.init file=config/main.xcl destination=./build/rendered/init.sh
+9:16AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=c42d8263fbe208fb554b472e004822a50eaa132375cdfa096652ff3c63fb3182 name=app
+9:16AM INFO destroy success source=core operation=destroy phase=success duration=556.043249ms
 ```
 
 `status` prints nothing but its tree: it gives xcl no event handler, so xcl
@@ -1026,16 +1359,16 @@ each `Init` logged, and go-plugin's own messages about starting the external
 process, marked `component=go-plugin`. Trimmed to the load of an `apply`:
 
 ```text
-11:12AM INFO load start source=core operation=load phase=start plugin=TemplatePlugin
-11:12AM DEBU registering block types source=TemplatePlugin operation=load phase=log block_types=template
-11:12AM DEBU provider ready source=TemplatePlugin operation=load phase=log provider=template
-11:12AM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin
-11:12AM INFO load start source=core operation=load phase=start plugin=docker-plugin
-11:12AM DEBU using plugin source=docker-plugin operation=load phase=log component=go-plugin version=1
-11:12AM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin
-11:12AM DEBU provider ready source=docker-plugin operation=load phase=log
-11:12AM DEBU provider ready source=docker-plugin operation=load phase=log
-11:12AM DEBU registering block types source=docker-plugin operation=load phase=log block_types="docker.network, docker.container"
+9:16AM INFO load start source=core operation=load phase=start plugin=TemplatePlugin registry=local
+9:16AM DEBU registering block types source=TemplatePlugin operation=load phase=log block_types=template
+9:16AM DEBU provider ready source=TemplatePlugin operation=load phase=log provider=template
+9:16AM INFO load success source=core operation=load phase=success block_types=template plugin=TemplatePlugin registry=local
+9:16AM INFO load start source=core operation=load phase=start plugin=docker-plugin registry=local
+9:16AM DEBU using plugin source=docker-plugin operation=load phase=log component=go-plugin version=1
+9:16AM INFO load success source=core operation=load phase=success block_types="docker.network, docker.container" plugin=docker-plugin registry=local
+9:16AM DEBU provider ready source=docker-plugin operation=load phase=log
+9:16AM DEBU registering block types source=docker-plugin operation=load phase=log block_types="docker.network, docker.container"
+9:16AM DEBU provider ready source=docker-plugin operation=load phase=log
 ```
 
 The two plugins' `Init` messages do not look quite the same. The in-process
@@ -1050,48 +1383,56 @@ run, prints the tree from the saved state alone, each resource under what it
 depends on, with the computed values the Docker plugin set:
 
 ```text
-● docker.network.app  10.42.0.0/24 · 61668d4b88e4
-└── ● docker.container.web  nginx:1.27-alpine · 10.42.0.2 · 84afde72343a
-    └── ● template.welcome  ./build/rendered/welcome.txt
+● docker.network.app  10.42.0.0/24 · c42d8263fbe2
+└── ● template.init  ./build/rendered/init.sh
+    └── ● docker.container.web  nginx:1.27-alpine · 10.42.0.2 · ccc41ac142a1
+        └── ● template.welcome  ./build/rendered/welcome.txt
 ```
 
 In a terminal the dots are green for a resource that was created, red for one
 that failed, and the Docker and template addresses are coloured by plugin.
 
 `xcl-docker inspect docker.container.web`, another run, prints the container
-as configuration, with the values the Docker plugin set and the reference to
-the network as it was written:
+as configuration, with the values the Docker plugin set and the references to
+the network and the init template as they were written:
 
 ```hcl
 docker "container" "web" {
-  image = "nginx:1.27-alpine"
+  image       = "nginx:1.27-alpine"
+  init_script = template.init.destination
 
   network {
     name    = docker.network.app.meta.name
     aliases = ["web"]
   }
 
-  docker_id  = "84afde72343a5f882468c0735b3c5c2ef4e55a5694adb1678fe3e668154fa76f" # set by the provider
+  docker_id  = "19e3e1e5dc0c9337844056a91078618ba7edb069c70f917af0ac60f88cb15ca3" # set by the provider
   ip_address = "10.42.0.2" # set by the provider
 }
 ```
 
-The rendered file holds the container's address, which crossed from the
-Docker plugin to the template plugin:
+The rendered welcome file holds the container's address, which crossed from
+the Docker plugin to the template plugin:
 
 ```text
 Welcome to the app network.
 The web container answers at http://10.42.0.2/
 ```
 
+and the init script, rendered with mode `0755`, has run inside the container
+when it started: `docker exec web cat /usr/share/nginx/html/init.txt` prints
+`web joined the app network`.
+
+### Replacing the network: `make replace`
+
 Before destroying, `plan` shows what applying a changed configuration would
 do. Planning `./config` as it was applied prints only
-`Diff: no changes, 3 unchanged.` The example's second configuration,
-`./config-subnet`, is `./config` with the network's address range widened
-from `10.42.0.0/24` to `10.42.0.0/23`. Each directory is a complete
-configuration of its own, so `./config` applies on its own as before. `make
-replace` applies `./config`, plans and applies `./config-subnet`, prints the
-status and destroys everything. The plan, with `./config` applied:
+`Diff: no changes, 4 unchanged.` The example's variant configurations
+each sit in a directory of their own and are each a complete configuration, so
+`./config` applies on its own as before. `./config-subnet` is `./config` with
+the network's address range widened from `10.42.0.0/24` to `10.42.0.0/23`.
+`make replace` applies `./config`, plans and applies `./config-subnet`, prints
+the status and destroys everything. The plan, with `./config` applied:
 
 ```bash
 ./build/xcl-docker plan ./config-subnet
@@ -1100,8 +1441,8 @@ status and destroys everything. The plan, with `./config` applied:
 prints, plain here and coloured in a terminal:
 
 ```text
-  # docker.container.web will be replaced because docker.network.app is replaced
--/+ docker "container" "web" {}
+  # docker.container.web will be updated because docker.network.app is replaced
+  ~ docker "container" "web" {}
 
   # docker.network.app will be replaced, it cannot be updated in place
 -/+ docker "network" "app" {
@@ -1113,53 +1454,244 @@ prints, plain here and coloured in a terminal:
       ~ variables["address"] = "10.42.0.2" -> (known after apply)
     }
 
-Diff: 0 to create, 1 to update, 2 to replace, 0 to delete, 0 unchanged.
+Diff: 0 to create, 2 to update, 1 to replace, 0 to delete, 1 unchanged.
 ```
 
 The network's provider answered replace for the new `subnet`. The
 container's configuration did not change at all, but its provider was told
-that the network it depends on is replaced, and answered replace too. The
-template's `address` is `(known after apply)` because it reads the
-container's `ip_address`, which the Docker plugin only sets when it creates
-the new container. Nothing was changed or saved by the plan.
+that the network it depends on is replaced, and answered update: its `Update`
+can reattach the running container. With no changes of its own, the plan
+names the dependency behind the update. The welcome template's `address` is
+`(known after apply)` because it reads the container's `ip_address`, which
+the Docker plugin reads again when it updates the container. The init
+template only reads the network's name, which does not change, so it is
+unchanged. Nothing was changed or saved by the plan.
 
-Applying `./config-subnet` reads and decides all three resources first, then
-destroys the container and the network, dependents first, then creates the
-network and the container again and updates the template, in dependency
-order. Trimmed to the provider calls, without the resources printed after
-each `create success`:
+Applying `./config-subnet` reads and decides every resource first, then
+destroys the network, which force-disconnects the running container, creates
+the network on the new range, updates the container, which connects it again,
+and updates the template, in dependency order. Trimmed to the provider calls,
+without the resources printed after each `create success`:
 
 ```text
-8:05PM INFO changed success source=core operation=changed phase=success resource=docker.network.app type=network.app file=config-subnet/main.xcl duration=133.821µs
-8:05PM INFO changed success source=core operation=changed phase=success resource=docker.container.web type=container.web file=config-subnet/main.xcl duration=173.891µs
-8:05PM INFO changed success source=core operation=changed phase=success resource=template.welcome type=template.welcome file=config-subnet/main.xcl duration=25.66µs
-8:05PM INFO destroy start source=core operation=destroy phase=start resource=docker.container.web type=container.web file=config/main.xcl
-8:05PM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/main.xcl name=web
-8:05PM INFO destroy start source=core operation=destroy phase=start resource=docker.network.app type=network.app file=config/main.xcl
-8:05PM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=f66ab71320eb34a564fc559bfcf678d499ab7822eb2a7cbe5d1af279ac0130ce name=app
-8:05PM INFO create start source=core operation=create phase=start resource=docker.network.app type=network.app file=config-subnet/main.xcl
-8:05PM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.app type=network.app file=config-subnet/main.xcl id=e4015612fc24a36960c68d4eb06683101f924c3e4c389201609571c5377cf509 name=app
-8:05PM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config-subnet/main.xcl
-8:05PM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config-subnet/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.2 name=web
-8:05PM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-subnet/main.xcl
-8:05PM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-subnet/main.xcl destination=./build/rendered/welcome.txt
-8:05PM INFO apply success source=core operation=apply phase=success duration=832.366578ms
+9:13AM INFO changed success source=core operation=changed phase=success resource=docker.network.app type=network.app file=config-subnet/main.xcl duration=261.132µs
+9:13AM INFO changed success source=core operation=changed phase=success resource=template.init type=template.init file=config-subnet/main.xcl duration=25.4µs
+9:13AM INFO changed success source=core operation=changed phase=success resource=docker.container.web type=container.web file=config-subnet/main.xcl duration=178.281µs
+9:13AM INFO changed success source=core operation=changed phase=success resource=template.welcome type=template.welcome file=config-subnet/main.xcl duration=22.8µs
+9:13AM INFO destroy start source=core operation=destroy phase=start resource=docker.network.app type=network.app file=config/main.xcl
+9:13AM INFO disconnected container from network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl container=19e3e1e5dc0c9337844056a91078618ba7edb069c70f917af0ac60f88cb15ca3 name=app
+9:13AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=136cd65886da2bb84b734e171ae95ff290788de9d1e1c401bb144b27704bd751 name=app
+9:13AM INFO create start source=core operation=create phase=start resource=docker.network.app type=network.app file=config-subnet/main.xcl
+9:13AM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.app type=network.app file=config-subnet/main.xcl id=1ab08a074f46cf0cef7dc4ce6678db70f101e5bcb44a10919ead399761d50693 name=app
+9:13AM INFO update start source=core operation=update phase=start resource=docker.container.web type=container.web file=config-subnet/main.xcl
+9:13AM INFO connected container to network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config-subnet/main.xcl name=web network=app
+9:13AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-subnet/main.xcl
+9:13AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-subnet/main.xcl destination=./build/rendered/welcome.txt
+9:13AM INFO apply success source=core operation=apply phase=success duration=196.256325ms
 ```
 
 A replacement is a `destroy` and a `create` for the same resource, there is
-no separate replace event. The destroys name `config/main.xcl`, the file the
-saved resource came from, and the creates `config-subnet/main.xcl`. The new
-network has a new Docker ID and the new range, the new container is attached
-to it, and the template is rendered again with the new container's address.
-`status` shows the new network:
+no separate replace event. The destroy names `config/main.xcl`, the file the
+saved resource came from, and the create `config-subnet/main.xcl`. The new
+network has a new Docker ID and the new range, and the container is the same
+one, with the same Docker ID, now attached to it. `status` shows the new
+network:
 
 ```text
-● docker.network.app  10.42.0.0/23 · e4015612fc24
-└── ● docker.container.web  nginx:1.27-alpine · 10.42.0.2 · 2730a76362eb
+● docker.network.app  10.42.0.0/23 · 1ab08a074f46
+└── ● template.init  ./build/rendered/init.sh
+    └── ● docker.container.web  nginx:1.27-alpine · 10.42.0.2 · 19e3e1e5dc0c
+        └── ● template.welcome  ./build/rendered/welcome.txt
+```
+
+and planning `./config-subnet` again prints `Diff: no changes, 4 unchanged.`
+
+### Moving the container: `make swap`
+
+`./config-swap` adds a second network, `backend` on `10.43.0.0/24`, and moves
+the container's `network` block from `app` to `backend`. `make swap` applies
+`./config`, then plans and applies `./config-swap`. The plan:
+
+```text
+  # docker.container.web will be updated
+  ~ docker "container" "web" {
+      ~ network[0].name = "app" -> "backend"
+    }
+
+  # docker.network.backend will be created
+  + docker "network" "backend" {
+      + subnet = "10.43.0.0/24"
+    }
+
+  # template.welcome will be updated
+  ~ template "welcome" {
+      ~ variables["address"] = "10.42.0.2" -> (known after apply)
+    }
+
+Diff: 1 to create, 2 to update, 0 to replace, 0 to delete, 2 unchanged.
+```
+
+The container has a change of its own, `network[0].name`, so its provider
+answers update: a network change is never a reason to rebuild it. Applying
+it creates `backend`, then the container's `Update` works out from the
+change's `Before` that it was on `app`, disconnects it from `app` and
+connects it to `backend`:
+
+```text
+9:12AM INFO create start source=core operation=create phase=start resource=docker.network.backend type=network.backend file=config-swap/main.xcl
+9:12AM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.backend type=network.backend file=config-swap/main.xcl id=7d7ed04f1b31a78024cdd7d91081eea532aaad38f03435bafd7467e9640385d1 name=backend
+9:12AM INFO update start source=core operation=update phase=start resource=docker.container.web type=container.web file=config-swap/main.xcl
+9:12AM INFO disconnected container from network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config-swap/main.xcl name=web network=app
+9:12AM INFO connected container to network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config-swap/main.xcl name=web network=backend
+9:12AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-swap/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-swap/main.xcl destination=./build/rendered/welcome.txt
+9:12AM INFO apply success source=core operation=apply phase=success duration=206.616252ms
+```
+
+The container keeps its Docker ID and now has an address on `backend`.
+`app` stays, since the init template still reads its name:
+
+```text
+● docker.network.app  10.42.0.0/24 · 4259e7f4c389
+└── ● template.init  ./build/rendered/init.sh
+    └── ● docker.container.web  nginx:1.27-alpine · 10.43.0.2 · 77383d58c1ca
+        └── ● template.welcome  ./build/rendered/welcome.txt
+● docker.network.backend  10.43.0.0/24 · 7d7ed04f1b31
+```
+
+### Moving the init script: `make rebuild-init`
+
+`./config-init` renders the init script to `init-v2.sh` instead of `init.sh`.
+`make rebuild-init` applies `./config`, then plans and applies
+`./config-init`. The plan:
+
+```text
+  # docker.container.web will be replaced because template.init is replaced
+-/+ docker "container" "web" {
+      ~ init_script = "./build/rendered/init.sh" -> "./build/rendered/init-v2.sh"
+    }
+
+  # template.init will be replaced, it cannot be updated in place
+-/+ template "init" {
+      ~ destination = "./build/rendered/init.sh" -> "./build/rendered/init-v2.sh"
+    }
+
+  # template.welcome will be updated
+  ~ template "welcome" {
+      ~ variables["address"] = "10.42.0.2" -> (known after apply)
+    }
+
+Diff: 0 to create, 1 to update, 2 to replace, 0 to delete, 1 unchanged.
+```
+
+The template provider replaces a template whose destination moves, so its
+`Destroy` removes the old file. The container's `init_script` changes too,
+and it is told that `template.init`, a dependency that isn't a network, is
+replaced, so it answers replace: the script is mounted when Docker creates the
+container. Applying it destroys the container and the template, renders the
+script to its new path and creates a new container that mounts it:
+
+```text
+9:12AM INFO destroy start source=core operation=destroy phase=start resource=docker.container.web type=container.web file=config/main.xcl
+9:12AM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/main.xcl name=web
+9:12AM INFO destroy start source=core operation=destroy phase=start resource=template.init type=template.init file=config/main.xcl
+9:12AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.init type=template.init file=config/main.xcl destination=./build/rendered/init.sh
+9:12AM INFO create start source=core operation=create phase=start resource=template.init type=template.init file=config-init/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.init type=template.init file=config-init/main.xcl destination=./build/rendered/init-v2.sh
+9:12AM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config-init/main.xcl
+9:12AM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config-init/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.3 name=web
+9:12AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-init/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-init/main.xcl destination=./build/rendered/welcome.txt
+9:12AM INFO apply success source=core operation=apply phase=success duration=557.54905ms
+```
+
+The container has a new Docker ID, and with it a new address:
+
+```text
+● docker.network.app  10.42.0.0/24 · cf902a871bf4
+└── ● template.init  ./build/rendered/init-v2.sh
+    └── ● docker.container.web  nginx:1.27-alpine · 10.42.0.3 · 4eab6d51bcbd
+        └── ● template.welcome  ./build/rendered/welcome.txt
+```
+
+Editing only the script's content, as `./config-init-content` does, is
+different. The template renders the file again in place, and the container,
+told only that a dependency was updated, is left alone:
+
+```text
+  # template.init will be updated
+  ~ template "init" {
+      ~ source = "#!/bin/sh\necho \"web joined the {{network}} network\" > /usr/share/nginx/html/init.txt\n" -> "#!/bin/sh\necho \"web is on the {{network}} network\" > /usr/share/nginx/html/init.txt\n"
+    }
+
+Diff: 0 to create, 1 to update, 0 to replace, 0 to delete, 3 unchanged.
+```
+
+### Removing the network: `make remove-network`
+
+`./config-remove` removes the `app` network together with every reference to
+it: the container's `network` block and the templates' `network` variables.
+`make remove-network` applies `./config`, then plans and applies
+`./config-remove`. The plan:
+
+```text
+  # docker.container.web will be updated
+  ~ docker "container" "web" {
+      - network[0] = { aliases = ["web"], name = "app" }
+    }
+
+  # docker.network.app will be deleted
+  - docker "network" "app" {}
+
+  # template.init will be updated
+  ~ template "init" {
+      ~ source               = "#!/bin/sh\necho \"web joined the {{network}} network\" > /usr/share/nginx/html/init.txt\n" -> "#!/bin/sh\necho \"web has no network\" > /usr/share/nginx/html/init.txt\n"
+      - variables["network"] = "app"
+    }
+
+  # template.welcome will be updated
+  ~ template "welcome" {
+      ~ source               = "Welcome to the {{network}} network.\nThe web container answers at http://{{address}}/\n" -> "Welcome, the web container has no network.\nThe web container answers at http://{{address}}/\n"
+      ~ variables["address"] = "10.42.0.2" -> (known after apply)
+      - variables["network"] = "app"
+    }
+
+Diff: 0 to create, 3 to update, 0 to replace, 1 to delete, 0 unchanged.
+```
+
+Removing the whole `network[0]` element is one change holding the whole
+block. The container answers update for it, so it keeps running. Applying it
+destroys the network first, force-disconnecting the container, then updates
+the templates and the container, whose `Update` disconnects it from `app`,
+already gone, which it ignores:
+
+```text
+9:12AM INFO destroy start source=core operation=destroy phase=start resource=docker.network.app type=network.app file=config/main.xcl
+9:12AM INFO disconnected container from network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl container=abf23052f240bbeac8d673454442312b57eaf46a2bb42638e8c297889b8443c8 name=app
+9:12AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=fc498460f2d0e7a166e7f1afcce09153979d2e62130aba5ba576eae0633bbda3 name=app
+9:12AM INFO update start source=core operation=update phase=start resource=template.init type=template.init file=config-remove/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.init type=template.init file=config-remove/main.xcl destination=./build/rendered/init.sh
+9:12AM INFO update start source=core operation=update phase=start resource=docker.container.web type=container.web file=config-remove/main.xcl
+9:12AM INFO disconnected container from network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config-remove/main.xcl name=web network=app
+9:12AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-remove/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-remove/main.xcl destination=./build/rendered/welcome.txt
+9:12AM INFO apply success source=core operation=apply phase=success duration=127.714717ms
+```
+
+The container keeps its Docker ID and is left on no network, so it has no
+address any more, and the network is gone from the tree:
+
+```text
+● template.init  ./build/rendered/init.sh
+└── ● docker.container.web  nginx:1.27-alpine · abf23052f240
     └── ● template.welcome  ./build/rendered/welcome.txt
 ```
 
-and planning `./config-subnet` again prints `Diff: no changes, 3 unchanged.`
+Removing only the network block, as `./config-dangling` does, while the
+container and the templates still refer to it, fails validation: the error
+says that `docker.container.web` refers to `docker.network.app.meta.name`,
+which is not defined anywhere in the configuration, and nothing is created,
+changed or destroyed.
 
 After `destroy`, `status` prints `nothing applied`.
 
@@ -1184,14 +1716,21 @@ After `destroy`, `status` prints `nothing applied`.
   load, such as a Docker plugin binary that was never built, fails it with
   `xcl.ErrPluginLoad`. The Docker plugin's process runs only while an
   operation uses it, so the program never stops it.
-- **Providers decide between update and replace.** Each Docker provider
-  overrides `Changed` to answer replace for what Docker fixes at creation,
-  and the container is replaced whenever the network it depends on is, so a
-  new address range replaces both and updates the template.
+- **Providers decide between update and replace from what they are told.**
+  Each Docker provider overrides `Changed` to answer replace for what Docker
+  fixes at creation. Network changes never rebuild the container: a network
+  moved, added, removed or replaced is handled by its `Update`, which keeps
+  the same running container. Only a change to its image, command,
+  environment or init script, or a replaced init-script template, creates a
+  new one.
+- **Update acts on the changes it is given.** The container's `Update` never
+  asks Docker what it was attached to: it rebuilds its previous networks from
+  each change's `Before`, and reconnects any network it was told was
+  replaced.
 - **Destroy calls the providers in reverse dependency order.** `Destroy`
-  works from the saved state alone, and removes the template before the
-  container and the container before its network, the reverse of the order
-  they were created in.
+  works from the saved state alone, and removes the welcome template before
+  the container, and the container before the init template and the network,
+  the reverse of the order they were created in.
 - **The tests run without Docker.** The providers hold a narrow `client.Docker`
   interface, so their unit tests use a generated mock, and the tests that
   need a real engine skip when `client.Ping` finds none.
