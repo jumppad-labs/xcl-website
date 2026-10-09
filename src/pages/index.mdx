@@ -165,7 +165,8 @@ fmt.Println(db.Location, db.Port)
   <FeatureCard icon="🔌" title="Plugins and providers">
     A provider gives a block type a lifecycle: `Create`, `Read`, `Changed`,
     `Update` and `Destroy`. `Changed` answers no change, update or replace,
-    knowing which of its dependencies are changing. Plugins run in-process,
+    told which of its settings and dependencies are changing, and `Update`
+    is told the same. Plugins run in-process,
     or as a separate binary over gRPC.
     [Unchanged, update or replace →](/replacement/)
   </FeatureCard>
