@@ -166,6 +166,13 @@ decides only the order types are read, plugins load and events are emitted.
 It never decides which of two providers wins a block type, see
 [Clashes](#clashes).
 
+The `registry` package also ships a GitHub registry, `registry.NewGitHub`,
+which installs plugins straight from GitHub releases: one
+`RegisterPlugin("owner/repo", "v1.2.0")` line per plugin, downloaded for the
+current platform, verified, cached and started as an external plugin. Give it
+beside a local registry like any other; see
+[Installing plugins from GitHub](/github-registry/).
+
 ## How problems are reported
 
 Registration returns no errors. A problem is reported in one of three places,
