@@ -50,6 +50,8 @@ plugins that do real work:
 Because the Docker plugin creates real containers, the example needs a Docker
 engine, reached through `DOCKER_HOST` or the default socket. The source is in
 [`example/plugin`](https://github.com/jumppad-labs/xcl/tree/main/example/plugin).
+To start a plugin of your own in the same layout, use the
+[plugin template](/plugin-template/).
 
 A computed value crosses from one plugin to the other. Docker only assigns a
 container its address when the container is created, so `ip_address` is a

@@ -1,0 +1,208 @@
+---
+layout: ../layouts/Shell.astro
+title: "Plugin template - xcl"
+description: "Start an xcl plugin from the plugin template: the standard plugin layout, an explicit update-or-replace decision, building, testing and running it in-process and as a separate program, signed releases, and installing them with the GitHub registry."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+import { templateURL } from "../config/site";
+
+<Hero
+  heading="Plugin template"
+  sub="Start a plugin from a working one. The template is a GitHub template repository with one resource that builds, tests and applies with nothing else running, runs in-process and as a separate program, and publishes signed releases the GitHub registry installs."
+/>
+
+<Prose>
+
+Every xcl plugin uses one layout, whether it runs inside an application or as
+a separate program. The [plugin template](https://github.com/jumppad-labs/xcl-plugin-template) is that layout's
+worked example. Its one resource, `notes "note"`, writes a note to a file, so
+it needs no Docker, no cloud account and no service: a repository made from
+it builds, passes its tests and applies its sample straight away.
+
+```hcl title="examples/basic/main.xcl"
+variable "directory" {
+  default = "./out"
+}
+
+notes "note" "greeting" {
+  directory = variable.directory
+  name      = "greeting.txt"
+  content   = "Hello from xcl"
+}
+```
+
+## The standard layout
+
+```text
+<plugin>/
+  plugin.go                    the plugin type: Init builds the clients once and registers each type
+  cmd/<plugin>/main.go         serves the plugin as a separate program
+  entities/<resource>.go       one block type per file, and nothing else
+  providers/<resource>.go      one provider per resource type
+  providers/<resource>_test.go strict-double unit tests
+  client/<backend>/            a narrow interface over each backend, its real implementation
+  client/<backend>/mocks/      Mockery-generated doubles
+  examples/<name>/main.xcl     sample configurations
+  e2e/                         end-to-end tests: apply, plan with no changes, destroy
+  .mockery.yml
+  Makefile                     build, test, generate
+```
+
+- **`entities/`** holds block types only. It imports nothing else from the
+  plugin and no backend library, so an application that only reads a
+  plugin's resources from state imports `entities` alone.
+- **`providers/`** holds one provider per resource type, each built by a
+  constructor that takes the clients it uses, so tests build it with doubles.
+- **`client/`** is the only place a backend is touched. Its interfaces hold
+  only the calls the providers make, and it never imports providers or
+  entities.
+- **`plugin.go`** sits in the module's root package, so an application can
+  import the plugin, and `cmd/<plugin>/main.go` serves the same type as a
+  separate program.
+
+Every source file lists its exported types and functions first and its
+helpers last, and a provider's methods follow the lifecycle: `Init`,
+`Create`, `Read`, `Changed`, `Update`, `Destroy`, `Functions`. The full
+write-up is the
+[plugin layout guide](https://github.com/jumppad-labs/xcl/blob/main/docs/plugin-layout.md).
+
+## Deciding and updating
+
+The provider decides between update and replace itself. The settings that
+cannot change in place are one list at the top of the provider:
+
+```go title="providers/note.go"
+var ReplaceSettings = []entity.Path{
+	entity.Path{}.Attribute("directory"),
+	entity.Path{}.Attribute("name"),
+}
+```
+
+`Changed` answers replace for a change within one of them or for a replaced
+dependency, update for any other change, and leaves the rest to
+`DefaultChanged`. `Update` then acts only on the changes it is given: a
+`content` change rewrites the file, a `mode` change alone only changes its
+mode, and it never looks the file up to find out what it was. See
+[Unchanged, update or replace](/replacement/) for how xcl calls them.
+
+## Start from the template
+
+Click **Use this template** on the [template repository](https://github.com/jumppad-labs/xcl-plugin-template), or:
+
+```shell
+gh repo create <you>/xcl-plugin-<name> --template jumppad-labs/xcl-plugin-template --public --clone
+```
+
+Name the repository after your plugin: the GitHub registry installs a plugin
+by its repository name. The template's README lists the renames that make it
+yours and walks through adding a resource of your own.
+
+## Build and test
+
+```shell
+make build      # every package, and the plugin program in build/
+make test       # unit and end-to-end tests, nothing else running
+make generate   # regenerate the Mockery doubles
+make lint       # go vet, gofmt and staticcheck
+```
+
+The provider's unit tests run against a strict double of the files client,
+so a call the reported changes do not need, such as a lookup of the old file,
+fails the test. GitHub Actions run the build, the checks and the tests on
+every push and pull request, and once a week against the latest xcl release.
+
+## Run it in-process and as a separate program
+
+```shell
+make inprocess   # the plugin imported and registered inside the application
+make external    # the plugin built and run as a separate program
+```
+
+Each applies the sample, plans it again with no changes and destroys it. An
+application registers the plugin one way or the other on a
+[local registry](/registries/):
+
+```go title="main.go"
+local := registry.NewLocal()
+local.RegisterPlugin(&notes.Plugin{})                       // in-process
+local.RegisterExternalPlugin("./build/xcl-plugin-template") // a separate program
+```
+
+## Release
+
+```shell
+make release VERSION=v0.1.0
+```
+
+Pushes the tag. The release workflow runs the tests, builds the plugin for
+linux, darwin and windows on amd64 and arm64, signs the checksums with the
+key in the repository's `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` secrets, and
+publishes a GitHub release holding:
+
+- `<name>_<version>_<os>_<arch>.tar.gz`, `.zip` on windows, with the binary
+  at its root;
+- `<name>_<version>_checksums.txt`, the SHA-256 of every archive;
+- `<name>_<version>_checksums.txt.sig`, an armoured detached signature over
+  the checksums.
+
+Without the signing key the workflow fails before building, so an unsigned
+release is never published. `make dist VERSION=v0.0.0-snapshot` builds the
+same archives locally, unsigned.
+
+## Install
+
+An application installs a release with the GitHub registry, trusting the
+author's published public key:
+
+```go title="main.go"
+gh := registry.NewGitHub(registry.GitHubTrustedKeys(publicKey))
+gh.RegisterPlugin("<you>/xcl-plugin-<name>", "v0.1.0")
+
+c, err := xcl.NewConfig(xcl.WithRegistry(gh))
+```
+
+[Installing plugins from GitHub](/github-registry/) covers pinning, private
+repositories and the cache.
+
+## Verifying releases
+
+The template's own releases are signed with the jumppad-labs release key,
+published on this site at
+[/keys/jumppad-labs-releases.asc](/keys/jumppad-labs-releases.asc). Its
+fingerprint is:
+
+```text
+15BD A684 3A1F A0EA D1AA  5190 F775 DA00 AFD4 B502
+```
+
+Check the key you download against it before trusting it:
+
+```shell
+curl -fsSLO https://xcl.dev/keys/jumppad-labs-releases.asc
+gpg --show-keys jumppad-labs-releases.asc
+```
+
+Then pass it to the registry:
+
+```go title="main.go"
+publicKey, err := os.ReadFile("jumppad-labs-releases.asc")
+if err != nil {
+	return err
+}
+
+gh := registry.NewGitHub(registry.GitHubTrustedKeys(string(publicKey)))
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-template", "v0.1.0")
+```
+
+</Prose>
+
+<CtaBanner
+  heading="Start a plugin"
+  body="Create a repository from the template, or see a larger plugin in the same layout in the plugins example."
+>
+  <Button href={templateURL} label="Use the template →" variant="primary" large external />
+  <Button href="/examples/plugins/" label="Plugins example →" variant="secondary" large />
+</CtaBanner>

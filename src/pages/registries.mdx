@@ -20,7 +20,8 @@ type is a plain Go type that configuration is decoded into, with no provider.
 A plugin's types come with a provider. Both come from registries, added with
 `xcl.WithRegistry`, so there is one way in and one place things are
 registered: everything a `Config` can read is stated where it is created, and
-it is always clear where a type or plugin comes from.
+it is always clear where a type or plugin comes from. To write a plugin of
+your own, start from the [plugin template](/plugin-template/).
 
 ## The local registry
 
