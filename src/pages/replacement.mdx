@@ -235,16 +235,34 @@ it shows as a destroy followed by a create of the same resource.
 
 The [plugins example](/examples/plugins/) ships an external Docker plugin with
 a network and a container. Docker cannot move a network to a new address
-range, so the network provider answers replace when the subnet changes, and
-leaves everything else to `DefaultChanged`:
+range, so the network provider answers replace when a change falls within
+`subnet`. Any other change to its settings answers update, which needs no
+Docker call, and when nothing changed it leaves the decision to
+`DefaultChanged`:
 
-```go title="example/plugin/plugins/docker/resources/network.go"
-// Changed answers replace when the subnet changes: Docker can not move a
-// network to a new address range, the network has to be removed and created
-// again. Any other change is left to DefaultChanged.
-func (p *networkProvider) Changed(ctx context.Context, old *Network, new *Network, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
-	if old.Subnet != new.Subnet {
-		return entity.Replace, nil
+```go title="example/plugin/plugins/docker/providers/network.go"
+// networkReplaceSettings are the settings Docker fixes when it creates a
+// network, a change to any of them needs a new network
+var networkReplaceSettings = []entity.Path{
+	entity.Path{}.Attribute("subnet"),
+}
+
+// Changed decides from what it is told. It answers replace when the subnet
+// changed: Docker can not move a network to a new address range, the network
+// has to be removed and created again. Any other change to its settings
+// answers update, which needs no Docker call. When nothing changed the
+// decision is left to DefaultChanged.
+func (p *networkProvider) Changed(ctx context.Context, old *entities.Network, new *entities.Network, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
+	for _, change := range changes {
+		for _, setting := range networkReplaceSettings {
+			if change.Within(setting) {
+				return entity.Replace, nil
+			}
+		}
+	}
+
+	if len(changes) > 0 {
+		return entity.Update, nil
 	}
 
 	return p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
@@ -263,7 +281,7 @@ replaced. A dependency that is only updated, such as the init template
 rendering new content to the same file, is left to `DefaultChanged`, which
 leaves the container alone:
 
-```go title="example/plugin/plugins/docker/resources/container.go"
+```go title="example/plugin/plugins/docker/providers/container.go"
 // replaceSettings are the settings Docker fixes when it creates a container,
 // a change to any of them needs a new container
 var replaceSettings = []entity.Path{
@@ -283,7 +301,7 @@ var replaceSettings = []entity.Path{
 // that is only updated, such as the init script's template rendering new
 // content, leaves the container alone: the decision is left to
 // DefaultChanged.
-func (p *containerProvider) Changed(ctx context.Context, old *Container, new *Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
+func (p *containerProvider) Changed(ctx context.Context, old *entities.Container, new *entities.Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
 	for _, change := range changes {
 		for _, setting := range replaceSettings {
 			if change.Within(setting) {
@@ -313,7 +331,7 @@ func (p *containerProvider) Changed(ctx context.Context, old *Container, new *Co
 ```
 
 The container's `Update` moves the running container between networks, again
-working only from what it is told. `resource` is the configuration as it is
+working only from what it is told. `c` is the configuration as it is
 now and `changes` is how it got there, so putting back each network change's
 `Before` rebuilds the `network` blocks the container had after the last
 apply, without asking Docker. It disconnects the networks that went away or
@@ -321,8 +339,8 @@ whose aliases changed, connects the new ones, connects again every network
 whose dependency was replaced, and reads the container's new address once if
 anything moved:
 
-```go title="example/plugin/plugins/docker/resources/container.go"
-func (p *containerProvider) Update(ctx context.Context, c *Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (*Container, error) {
+```go title="example/plugin/plugins/docker/providers/container.go"
+func (p *containerProvider) Update(ctx context.Context, c *entities.Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (*entities.Container, error) {
 	previous, err := previousAttachments(c.Networks, changes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to work out the previous networks of container %s: %w", c.Meta.Name, err)
@@ -337,8 +355,8 @@ func (p *containerProvider) Update(ctx context.Context, c *Container, changes []
 		}
 
 		// a network that was removed or rebuilt has already detached it
-		err := p.client.NetworkDisconnect(ctx, attachment.Name, c.DockerID, true)
-		if err != nil && !dockerclient.IsErrNotFound(err) {
+		err := p.tasks.DisconnectNetwork(ctx, attachment.Name, c.DockerID)
+		if err != nil && !errors.Is(err, containers.ErrNotFound) {
 			return nil, fmt.Errorf("unable to disconnect container %s from network %s: %w", c.Meta.Name, attachment.Name, err)
 		}
 
@@ -383,12 +401,12 @@ func (p *containerProvider) Update(ctx context.Context, c *Container, changes []
 		return c, nil
 	}
 
-	inspect, err := p.client.ContainerInspect(ctx, c.DockerID)
+	addresses, err := p.tasks.ContainerAddresses(ctx, c.DockerID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to inspect container %s: %w", c.Meta.Name, err)
 	}
 
-	c.IPAddress = firstAddress(c, inspect)
+	c.IPAddress = firstAddress(c, addresses)
 
 	return c, nil
 }

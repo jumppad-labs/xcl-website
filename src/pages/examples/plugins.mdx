@@ -140,14 +140,17 @@ template "welcome" {
 
 ## The types
 
-Each block type is a Go struct embedding `types.ResourceBase`. The container
+Each block type is a Go struct embedding `types.ResourceBase`. The Docker
+plugin keeps its block types in a package of their own, `entities`, which
+holds no providers and imports no Docker library, so a program can import it
+to read back the blocks it applied without pulling in the plugin. The container
 has two computed fields, `docker_id` and `ip_address`, marked `computed` in
 their tags. They can not be set in configuration, only a provider can fill
 them in. Its nested `network` block is a slice of `NetworkAttachment`, one
 entry for each `network` block the container has, and its optional
 `init_script` is the path of a script it runs when it starts:
 
-```go title="example/plugin/plugins/docker/resources/container.go"
+```go title="example/plugin/plugins/docker/entities/container.go"
 // Container defines the block type docker "container", a Docker container
 // named after the block
 type Container struct {
@@ -179,6 +182,7 @@ type Container struct {
 	// IPAddress is computed, the container's address on its first network
 	IPAddress string `xcl:"ip_address,optional,computed" json:"ip_address,omitempty"`
 }
+
 // NetworkAttachment is a nested network block of a docker "container" block
 type NetworkAttachment struct {
 	// Name is the Docker name of the network, i.e. docker.network.app.meta.name
@@ -189,32 +193,37 @@ type NetworkAttachment struct {
 }
 ```
 
-`resources.Network` is built the same way, with a `subnet` and a computed
+`entities.Network` is built the same way, with a `subnet` and a computed
 `docker_id`.
 
 ## The Docker plugin
 
 A plugin embeds `plugins.PluginBase` and registers the block types it
 provides in `Init`, calling `RegisterResourceProvider` once per type with
-the type's Go struct and its provider. The Docker plugin builds one Docker
-client first and gives it to both providers. The logger `Init` receives is
-plugin scoped: it is for messages written outside a provider call, and xcl
-names the plugin as the source of everything it logs.
+the type's Go struct and its provider. The Docker plugin's `Plugin` type sits
+in the root package of its module, `docker`, so it can be imported as well as
+served. Its `Init` builds one Docker client first, wraps it once in the
+container task layer, and gives that to both providers. The logger `Init`
+receives is plugin scoped: it is for messages written outside a provider
+call, and xcl names the plugin as the source of everything it logs.
 
 ```go title="example/plugin/plugins/docker/plugin.go"
-// Init builds the Docker client from the environment and registers both block
-// types, each with a provider holding that client. Building the client does
-// not contact Docker, the providers do when they are called.
+// Init builds the Docker client from the environment, and the container task
+// layer over it once, then registers both block types, each with a provider
+// sharing that task layer. Building them does not contact Docker, the
+// providers do when they are called.
 //
 // logger is plugin scoped, for messages written outside a provider call like
 // this one. xcl adds provider=<block subtype> to what each provider's Init
 // logs. During a call the providers log through plugins.Logger(ctx) instead,
 // which xcl binds to the resource and step being worked on.
 func (p *Plugin) Init(logger logger.Logger, state plugins.State) error {
-	dockerClient, err := client.New()
+	client, err := dockerclient.New()
 	if err != nil {
 		return err
 	}
+
+	tasks := containers.New(client)
 
 	logger.Debug("registering block types", "block_types", "docker.network, docker.container")
 
@@ -224,8 +233,8 @@ func (p *Plugin) Init(logger logger.Logger, state plugins.State) error {
 		state,
 		"docker",
 		"network",
-		&resources.Network{},
-		resources.NewNetworkProvider(dockerClient),
+		&entities.Network{},
+		providers.NewNetworkProvider(tasks),
 	)
 	if err != nil {
 		return err
@@ -237,24 +246,24 @@ func (p *Plugin) Init(logger logger.Logger, state plugins.State) error {
 		state,
 		"docker",
 		"container",
-		&resources.Container{},
-		resources.NewContainerProvider(dockerClient),
+		&entities.Container{},
+		providers.NewContainerProvider(tasks),
 	)
 }
 ```
 
 ### The providers
 
-The providers never use the Docker SDK client directly. They hold a
-`client.Docker`, a narrow interface listing only the SDK methods they call,
-each with the SDK's own signature. It lives in its own package,
-`plugins/docker/client`, alongside `New`, which builds the real client from
-the environment, and `Ping`, which checks an engine answers. The real SDK
-`*client.Client` satisfies the interface with no adapter, and the unit tests
-use a mock generated from it:
+The providers, in the `providers` package, never use the Docker SDK and
+import no Docker library. The Docker client layer lives under `client`, in two
+packages. `client/docker` holds `Docker`, a narrow interface listing only the
+SDK methods the plugin calls, each with the SDK's own signature, alongside
+`New`, which builds the real client from the environment, and `Ping`, which
+checks an engine answers. The real SDK `*client.Client` satisfies the
+interface with no adapter:
 
-```go title="example/plugin/plugins/docker/client/client.go"
-// Docker is the part of the Docker Engine SDK client the providers use. Each
+```go title="example/plugin/plugins/docker/client/docker/docker.go"
+// Docker is the part of the Docker Engine SDK client the task layer uses. Each
 // method has the same signature as the SDK's, so *client.Client satisfies it.
 type Docker interface {
 	Ping(ctx context.Context) (types.Ping, error)
@@ -279,16 +288,69 @@ type Docker interface {
 var _ Docker = (*dockerclient.Client)(nil)
 ```
 
-A provider is typed on the block's Go type, so every method receives a
-`*Network` with all its references already resolved. `Create` asks Docker
-for a bridge network named after the block, labelled so the objects the
-example made can be found with `docker network ls`, and records the ID Docker
-gives it in the computed `DockerID`. `Destroy` removes the network by that
-ID, force-disconnecting any container still attached first, since Docker
-refuses to remove a network with active endpoints. The provider embeds `DefaultChanged`, which answers update whenever the
-configured values differ, and overrides `Changed` for the one thing Docker
-cannot change in place, as [Update or replace](#update-or-replace) below
-shows.
+`client/containers` is the task layer built on it, the one place the plugin
+turns what its providers want done into SDK calls. It speaks in its own data
+types, `NetworkSpec`, `ContainerSpec` and `Attachment`, so the providers hold
+a `containers.Tasks` and never see a Docker type. Docker's "not found" errors
+come back matching `containers.ErrNotFound`, so a provider checks for them
+with `errors.Is`:
+
+```go title="example/plugin/plugins/docker/client/containers/containers.go"
+// Tasks are the Docker tasks the plugin's providers perform
+type Tasks interface {
+	// CreateNetwork creates a labelled, attachable bridge network and
+	// returns its Docker ID
+	CreateNetwork(ctx context.Context, name string, spec NetworkSpec) (string, error)
+
+	// NetworkContainers returns the IDs of the containers attached to the
+	// network, sorted
+	NetworkContainers(ctx context.Context, networkID string) ([]string, error)
+
+	// RemoveNetwork removes the network
+	RemoveNetwork(ctx context.Context, networkID string) error
+
+	// ConnectNetwork attaches the container to the network with aliases
+	ConnectNetwork(ctx context.Context, network, containerID string, aliases []string) error
+
+	// DisconnectNetwork force-detaches the container from the network
+	DisconnectNetwork(ctx context.Context, network, containerID string) error
+
+	// EnsureImage pulls the image unless Docker already has it
+	EnsureImage(ctx context.Context, ref string) error
+
+	// CreateContainer creates the container and returns its Docker ID
+	CreateContainer(ctx context.Context, spec ContainerSpec) (string, error)
+
+	// StartContainer starts the container
+	StartContainer(ctx context.Context, containerID string) error
+
+	// StopContainer stops the container
+	StopContainer(ctx context.Context, containerID string) error
+
+	// RemoveContainer force-removes the container
+	RemoveContainer(ctx context.Context, containerID string) error
+
+	// ContainerAddresses returns the container's address on each network it
+	// is attached to, keyed by network name
+	ContainerAddresses(ctx context.Context, containerID string) (map[string]string, error)
+}
+```
+
+Each interface has a mock generated from it, so both layers are unit tested
+without Docker: the providers' tests use a mock of `Tasks`, and the task
+layer's own tests a mock of `Docker`.
+
+A provider is typed on the block's Go type, so every method receives an
+`*entities.Network` with all its references already resolved. `Create` asks
+the task layer for a bridge network named after the block, labelled so the
+objects the example made can be found with `docker network ls`, and records
+the ID Docker gives it in the computed `DockerID`. `Destroy` removes the
+network by that ID, force-disconnecting any container still attached first,
+since Docker refuses to remove a network with active endpoints. A network or
+container that is already gone matches `containers.ErrNotFound` and counts as
+removed. The provider embeds `DefaultChanged` and overrides `Changed` for the
+one thing Docker cannot change in place, as
+[Update or replace](#update-or-replace) below shows.
 
 Each method logs through `plugins.Logger(ctx)`, the logger xcl puts in the
 call's context. It is already bound to the resource, its type, its file and
@@ -296,29 +358,19 @@ the step, so the provider passes only what it has to say. That works the same
 inside the plugin process as it does in-process: the host gives each message
 its call's resource and step.
 
-```go title="example/plugin/plugins/docker/resources/network.go"
+```go title="example/plugin/plugins/docker/providers/network.go"
 // Create asks Docker for a labelled bridge network named after the block, and
 // records the ID Docker gives it
-func (p *networkProvider) Create(ctx context.Context, n *Network) (*Network, error) {
-	options := network.CreateOptions{
-		Driver:     "bridge",
-		Attachable: true,
-		Labels:     labels(n.Meta),
-	}
-
-	if n.Subnet != "" {
-		options.IPAM = &network.IPAM{
-			Driver: "default",
-			Config: []network.IPAMConfig{{Subnet: n.Subnet}},
-		}
-	}
-
-	resp, err := p.client.NetworkCreate(ctx, n.Meta.Name, options)
+func (p *networkProvider) Create(ctx context.Context, n *entities.Network) (*entities.Network, error) {
+	id, err := p.tasks.CreateNetwork(ctx, n.Meta.Name, containers.NetworkSpec{
+		Subnet: n.Subnet,
+		Labels: labels(n.Meta),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create network %s: %w", n.Meta.Name, err)
 	}
 
-	n.DockerID = resp.ID
+	n.DockerID = id
 	plugins.Logger(ctx).Info("created network", "name", n.Meta.Name, "id", n.DockerID)
 
 	return n, nil
@@ -328,9 +380,10 @@ func (p *networkProvider) Create(ctx context.Context, n *Network) (*Network, err
 // removed. Every container still attached is force-disconnected first, so
 // rebuilding a network never fails on its active endpoints; the container's
 // own Update attaches it again to the network that replaces this one.
-func (p *networkProvider) Destroy(ctx context.Context, n *Network, force bool) error {
-	inspect, err := p.client.NetworkInspect(ctx, n.DockerID, network.InspectOptions{})
-	if dockerclient.IsErrNotFound(err) {
+func (p *networkProvider) Destroy(ctx context.Context, n *entities.Network, force bool) error {
+	// sorted, so the containers are always detached in the same order
+	attached, err := p.tasks.NetworkContainers(ctx, n.DockerID)
+	if errors.Is(err, containers.ErrNotFound) {
 		plugins.Logger(ctx).Info("network already removed", "name", n.Meta.Name, "id", n.DockerID)
 		return nil
 	}
@@ -339,24 +392,17 @@ func (p *networkProvider) Destroy(ctx context.Context, n *Network, force bool) e
 		return fmt.Errorf("unable to inspect network %s: %w", n.Meta.Name, err)
 	}
 
-	// sorted, so the containers are always detached in the same order
-	attached := make([]string, 0, len(inspect.Containers))
-	for containerID := range inspect.Containers {
-		attached = append(attached, containerID)
-	}
-	sort.Strings(attached)
-
 	for _, containerID := range attached {
-		err := p.client.NetworkDisconnect(ctx, n.DockerID, containerID, true)
-		if err != nil && !dockerclient.IsErrNotFound(err) {
+		err := p.tasks.DisconnectNetwork(ctx, n.DockerID, containerID)
+		if err != nil && !errors.Is(err, containers.ErrNotFound) {
 			return fmt.Errorf("unable to disconnect container %s from network %s: %w", containerID, n.Meta.Name, err)
 		}
 
 		plugins.Logger(ctx).Info("disconnected container from network", "name", n.Meta.Name, "container", containerID)
 	}
 
-	err = p.client.NetworkRemove(ctx, n.DockerID)
-	if err != nil && !dockerclient.IsErrNotFound(err) {
+	err = p.tasks.RemoveNetwork(ctx, n.DockerID)
+	if err != nil && !errors.Is(err, containers.ErrNotFound) {
 		return fmt.Errorf("unable to remove network %s: %w", n.Meta.Name, err)
 	}
 
@@ -368,53 +414,57 @@ func (p *networkProvider) Destroy(ctx context.Context, n *Network, force bool) e
 
 The container provider's `Create` does more. It pulls the image when Docker
 does not have it, creates the container on its first network with its init
-script mounted, then starts it and inspects it for its address. The two computed fields are only set once
-everything has worked, and a container that was created but failed to start
+script mounted, then starts it and asks for its address. It describes the
+container as a `containers.ContainerSpec`, resolving the init script to an
+absolute path. The two computed fields are only set once everything has
+worked, and a container that was created but failed to start
 is removed again, so a failed `Create` leaves nothing behind:
 
-```go title="example/plugin/plugins/docker/resources/container.go"
+```go title="example/plugin/plugins/docker/providers/container.go"
 // Create pulls the image when Docker does not have it, creates the container
 // on its first network, connects the rest, starts it and records its ID and
 // its address on the first network. When a step after the container was
 // created fails, the container is removed again.
-func (p *containerProvider) Create(ctx context.Context, c *Container) (*Container, error) {
-	err := p.pullImage(ctx, c.Image)
+func (p *containerProvider) Create(ctx context.Context, c *entities.Container) (*entities.Container, error) {
+	err := p.tasks.EnsureImage(ctx, c.Image)
 	if err != nil {
 		return nil, err
 	}
 
-	config := &container.Config{
-		Image:  c.Image,
-		Cmd:    c.Command,
-		Env:    environment(c.Environment),
-		Labels: labels(c.Meta),
+	spec := containers.ContainerSpec{
+		Name:        c.Meta.Name,
+		Image:       c.Image,
+		Command:     c.Command,
+		Environment: c.Environment,
+		Labels:      labels(c.Meta),
 	}
 
-	networking := &network.NetworkingConfig{}
 	if len(c.Networks) > 0 {
 		first := c.Networks[0]
-		networking.EndpointsConfig = map[string]*network.EndpointSettings{
-			first.Name: {Aliases: first.Aliases},
+		spec.Network = &containers.Attachment{Name: first.Name, Aliases: first.Aliases}
+	}
+
+	if c.InitScript != "" {
+		path, err := filepath.Abs(c.InitScript)
+		if err != nil {
+			return nil, fmt.Errorf("unable to mount the init script of container %s: %w", c.Meta.Name, err)
 		}
+
+		spec.InitScript = path
 	}
 
-	hostConfig, err := initScriptMount(c.InitScript)
-	if err != nil {
-		return nil, fmt.Errorf("unable to mount the init script of container %s: %w", c.Meta.Name, err)
-	}
-
-	resp, err := p.client.ContainerCreate(ctx, config, hostConfig, networking, nil, c.Meta.Name)
+	id, err := p.tasks.CreateContainer(ctx, spec)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create container %s: %w", c.Meta.Name, err)
 	}
 
-	address, err := p.startContainer(ctx, c, resp.ID)
+	address, err := p.startContainer(ctx, c, id)
 	if err != nil {
-		removeErr := p.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		removeErr := p.tasks.RemoveContainer(ctx, id)
 		return nil, errors.Join(err, removeErr)
 	}
 
-	c.DockerID = resp.ID
+	c.DockerID = id
 	c.IPAddress = address
 	plugins.Logger(ctx).Info("created container", "name", c.Meta.Name, "image", c.Image, "ip_address", c.IPAddress)
 
@@ -422,57 +472,73 @@ func (p *containerProvider) Create(ctx context.Context, c *Container) (*Containe
 }
 ```
 
-The init script is bind-mounted read-only into the nginx image's entrypoint
-directory, where nginx runs every executable script before it starts, so the
-container runs it each time it starts:
+The task layer turns that spec into the SDK's container, network and host
+configuration. The init script is bind-mounted read-only into the nginx
+image's entrypoint directory, where nginx runs every executable script before
+it starts, so the container runs it each time it starts:
 
-```go title="example/plugin/plugins/docker/resources/container.go"
+```go title="example/plugin/plugins/docker/client/containers/containers.go"
 // initScriptPath is where the init script is mounted. The nginx image's
 // entrypoint runs every executable script in /docker-entrypoint.d before it
 // starts nginx.
 const initScriptPath = "/docker-entrypoint.d/90-xcl-init.sh"
 
-// initScriptMount returns the host configuration that mounts script
-// read-only at initScriptPath, none when there is no script
-func initScriptMount(script string) (*container.HostConfig, error) {
-	if script == "" {
-		return &container.HostConfig{}, nil
+// CreateContainer creates the container on its network, with its environment
+// sorted and its init script mounted read-only at initScriptPath
+func (t *tasks) CreateContainer(ctx context.Context, spec ContainerSpec) (string, error) {
+	config := &container.Config{
+		Image:  spec.Image,
+		Cmd:    spec.Command,
+		Env:    environment(spec.Environment),
+		Labels: spec.Labels,
 	}
 
-	path, err := filepath.Abs(script)
+	networking := &network.NetworkingConfig{}
+	if spec.Network != nil {
+		networking.EndpointsConfig = map[string]*network.EndpointSettings{
+			spec.Network.Name: {Aliases: spec.Network.Aliases},
+		}
+	}
+
+	hostConfig := &container.HostConfig{}
+	if spec.InitScript != "" {
+		hostConfig.Binds = []string{spec.InitScript + ":" + initScriptPath + ":ro"}
+	}
+
+	resp, err := t.client.ContainerCreate(ctx, config, hostConfig, networking, nil, spec.Name)
 	if err != nil {
-		return nil, err
+		return "", notFound(err)
 	}
 
-	return &container.HostConfig{Binds: []string{path + ":" + initScriptPath + ":ro"}}, nil
+	return resp.ID, nil
 }
 ```
 
 `startContainer` connects any further networks, starts the container and
-reads its address on the first network back from `ContainerInspect`:
+reads its address on the first network back from `ContainerAddresses`:
 
-```go title="example/plugin/plugins/docker/resources/container.go"
+```go title="example/plugin/plugins/docker/providers/container.go"
 // startContainer connects the created container to its further networks,
 // starts it and returns its address on its first network
-func (p *containerProvider) startContainer(ctx context.Context, c *Container, id string) (string, error) {
+func (p *containerProvider) startContainer(ctx context.Context, c *entities.Container, id string) (string, error) {
 	for _, attachment := range c.Networks[min(1, len(c.Networks)):] {
-		err := p.client.NetworkConnect(ctx, attachment.Name, id, &network.EndpointSettings{Aliases: attachment.Aliases})
+		err := p.tasks.ConnectNetwork(ctx, attachment.Name, id, attachment.Aliases)
 		if err != nil {
 			return "", fmt.Errorf("unable to connect container %s to network %s: %w", c.Meta.Name, attachment.Name, err)
 		}
 	}
 
-	err := p.client.ContainerStart(ctx, id, container.StartOptions{})
+	err := p.tasks.StartContainer(ctx, id)
 	if err != nil {
 		return "", fmt.Errorf("unable to start container %s: %w", c.Meta.Name, err)
 	}
 
-	inspect, err := p.client.ContainerInspect(ctx, id)
+	addresses, err := p.tasks.ContainerAddresses(ctx, id)
 	if err != nil {
 		return "", fmt.Errorf("unable to inspect container %s: %w", c.Meta.Name, err)
 	}
 
-	return firstAddress(c, inspect), nil
+	return firstAddress(c, addresses), nil
 }
 ```
 
@@ -480,16 +546,34 @@ func (p *containerProvider) startContainer(ctx context.Context, c *Container, id
 
 `DefaultChanged` never answers replace, but some of what a Docker network or
 container is made from is fixed when Docker creates it. So both providers
-override `Changed`. A network cannot move to a new address range, so a new
-`subnet` replaces it, and anything else is left to `DefaultChanged`:
+override `Changed`. A network cannot move to a new address range, so a change
+within `subnet` replaces it. Any other change to its settings answers update,
+which needs no Docker call, and when nothing changed the decision is left to
+`DefaultChanged`:
 
-```go title="example/plugin/plugins/docker/resources/network.go"
-// Changed answers replace when the subnet changes: Docker can not move a
-// network to a new address range, the network has to be removed and created
-// again. Any other change is left to DefaultChanged.
-func (p *networkProvider) Changed(ctx context.Context, old *Network, new *Network, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
-	if old.Subnet != new.Subnet {
-		return entity.Replace, nil
+```go title="example/plugin/plugins/docker/providers/network.go"
+// networkReplaceSettings are the settings Docker fixes when it creates a
+// network, a change to any of them needs a new network
+var networkReplaceSettings = []entity.Path{
+	entity.Path{}.Attribute("subnet"),
+}
+
+// Changed decides from what it is told. It answers replace when the subnet
+// changed: Docker can not move a network to a new address range, the network
+// has to be removed and created again. Any other change to its settings
+// answers update, which needs no Docker call. When nothing changed the
+// decision is left to DefaultChanged.
+func (p *networkProvider) Changed(ctx context.Context, old *entities.Network, new *entities.Network, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
+	for _, change := range changes {
+		for _, setting := range networkReplaceSettings {
+			if change.Within(setting) {
+				return entity.Replace, nil
+			}
+		}
+	}
+
+	if len(changes) > 0 {
+		return entity.Update, nil
 	}
 
 	return p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
@@ -509,7 +593,7 @@ does a network it depends on being updated or replaced. A dependency that is
 only updated, such as the init template rendering new content to the same
 file, is left to `DefaultChanged`, which leaves the container alone:
 
-```go title="example/plugin/plugins/docker/resources/container.go"
+```go title="example/plugin/plugins/docker/providers/container.go"
 // replaceSettings are the settings Docker fixes when it creates a container,
 // a change to any of them needs a new container
 var replaceSettings = []entity.Path{
@@ -529,7 +613,7 @@ var replaceSettings = []entity.Path{
 // that is only updated, such as the init script's template rendering new
 // content, leaves the container alone: the decision is left to
 // DefaultChanged.
-func (p *containerProvider) Changed(ctx context.Context, old *Container, new *Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
+func (p *containerProvider) Changed(ctx context.Context, old *entities.Container, new *entities.Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
 	for _, change := range changes {
 		for _, setting := range replaceSettings {
 			if change.Within(setting) {
@@ -567,7 +651,7 @@ went away or whose aliases changed, connects the new ones, connects again
 every network whose dependency was replaced, and reads the container's new
 address once if anything moved:
 
-```go title="example/plugin/plugins/docker/resources/container.go"
+```go title="example/plugin/plugins/docker/providers/container.go"
 // Update moves the running container between networks, working only from what
 // it is told, never from what Docker reports:
 //
@@ -580,7 +664,7 @@ address once if anything moved:
 //
 // When it moved the container it reads the container's new address, an
 // output, not previous state.
-func (p *containerProvider) Update(ctx context.Context, c *Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (*Container, error) {
+func (p *containerProvider) Update(ctx context.Context, c *entities.Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (*entities.Container, error) {
 	previous, err := previousAttachments(c.Networks, changes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to work out the previous networks of container %s: %w", c.Meta.Name, err)
@@ -595,8 +679,8 @@ func (p *containerProvider) Update(ctx context.Context, c *Container, changes []
 		}
 
 		// a network that was removed or rebuilt has already detached it
-		err := p.client.NetworkDisconnect(ctx, attachment.Name, c.DockerID, true)
-		if err != nil && !dockerclient.IsErrNotFound(err) {
+		err := p.tasks.DisconnectNetwork(ctx, attachment.Name, c.DockerID)
+		if err != nil && !errors.Is(err, containers.ErrNotFound) {
 			return nil, fmt.Errorf("unable to disconnect container %s from network %s: %w", c.Meta.Name, attachment.Name, err)
 		}
 
@@ -641,12 +725,12 @@ func (p *containerProvider) Update(ctx context.Context, c *Container, changes []
 		return c, nil
 	}
 
-	inspect, err := p.client.ContainerInspect(ctx, c.DockerID)
+	addresses, err := p.tasks.ContainerAddresses(ctx, c.DockerID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to inspect container %s: %w", c.Meta.Name, err)
 	}
 
-	c.IPAddress = firstAddress(c, inspect)
+	c.IPAddress = firstAddress(c, addresses)
 
 	return c, nil
 }
@@ -666,20 +750,23 @@ changes that need no Docker call.
 ### The external binary
 
 The Docker plugin is ordinary Go, written against the same `plugins` package
-an in-process plugin uses. What makes it external is that it is a program of
-its own: `example/plugin/plugins/docker` is its `main` package, holding the
-plugin and a `main` that hands it to `plugins.Serve`, with the block types and
-providers in `plugins/docker/resources` and the Docker client in
-`plugins/docker/client`. The host program imports only
-`plugins/docker/resources`, to read the blocks it applied. xcl does the rest:
-the handshake with the host that started the process and the gRPC transport,
-so the plugin never imports go-plugin. `make build` compiles it to
-`build/docker-plugin`:
+an in-process plugin uses. What makes it external is that it is built as a
+program of its own. `example/plugin/plugins/docker` is a Go module of its
+own, with its own `go.mod` and `Makefile`. The `Plugin` type is in
+`plugin.go`, in the module's root package, `docker`, and `cmd/docker/main.go`
+is a `main` that hands it to `plugins.Serve`. The block types are in
+`entities`, the providers in `providers` and the Docker client layer in
+`client`. The host program imports only `plugins/docker/entities`, to read
+the blocks it applied, so its build includes no Docker library. xcl does the
+rest: the handshake with the host that started the process and the gRPC
+transport, so the plugin never imports go-plugin. `make build` in
+`example/plugin` compiles it to `build/docker-plugin`, next to `xcl-docker`,
+and `make build` in `plugins/docker` builds it on its own:
 
-```go title="example/plugin/plugins/docker/main.go"
+```go title="example/plugin/plugins/docker/cmd/docker/main.go"
 // main serves the plugin to the host that started this process
 func main() {
-	plugins.Serve(&Plugin{})
+	plugins.Serve(&docker.Plugin{})
 }
 ```
 
@@ -978,15 +1065,17 @@ it, which is how the receiver shows each resource's
 [configuration](/configuration-text/) as it is created.
 
 `apply` checks that a Docker engine answers before it applies anything, so a
-missing engine is a clear error rather than a failed `Create`. Nothing stops
-the Docker plugin: xcl starts its process for each operation and stops it
+missing engine is a clear error rather than a failed `Create`. It asks with
+`pingDocker`, in `engine.go`, which sends the engine the same `GET /_ping` the
+Docker SDK's own `Ping` sends, but through the standard library, so the
+program still needs no Docker library. Nothing stops the Docker plugin: xcl starts its process for each operation and stops it
 when the operation is done:
 
 ```go title="example/plugin/main.go"
 func applyCommand(stderr io.Writer, configDir, dockerPlugin, stateDir string) error {
 	// The Docker plugin creates real containers, check an engine answers
 	// before applying anything
-	if err := client.Ping(context.Background()); err != nil {
+	if err := pingDocker(context.Background()); err != nil {
 		return err
 	}
 
@@ -1009,7 +1098,7 @@ gives xcl no event handler:
 
 ```go title="example/plugin/main.go"
 func planCommand(stdout io.Writer, configDir, dockerPlugin, stateDir string) error {
-	if err := client.Ping(context.Background()); err != nil {
+	if err := pingDocker(context.Background()); err != nil {
 		return err
 	}
 
@@ -1079,8 +1168,20 @@ func statusCommand(stdout io.Writer, dockerPlugin, stateDir string) error {
 It reads the networks, containers and templates back from the `Config`.
 Plugin types are held as types generated from the plugin's schema, and the
 lookup copies them into the plugin's Go type, so reading them back looks the
-same as it does without plugins. A type with no subtype is looked up by its
-type alone:
+same as it does without plugins. The Docker blocks are read as
+`entities.Network` and `entities.Container`, the plugin's `entities` package
+being the only part of it the program imports:
+
+```go title="example/plugin/status.go"
+	// Plugin types are held as types generated from the plugin's schema, the
+	// lookup copies them into the plugin's Go type
+	networks, err := xcl.FindByType[entities.Network](c, "docker", "network")
+	if err != nil {
+		return nil, err
+	}
+```
+
+A type with no subtype is looked up by its type alone:
 
 ```go title="example/plugin/status.go"
 	// template has no subtype, so its address has one segment before the name
@@ -1143,7 +1244,7 @@ depend on:
 
 ```go title="example/plugin/main.go"
 func destroyCommand(stderr io.Writer, dockerPlugin, stateDir string) error {
-	if err := client.Ping(context.Background()); err != nil {
+	if err := pingDocker(context.Background()); err != nil {
 		return err
 	}
 
@@ -1173,52 +1274,52 @@ func explainPluginLoad(err error) error {
 ## Testing
 
 The providers are unit tested without Docker. Each test hands the provider
-a `MockDocker`, the Mockery mock of the `client.Docker` interface, sets the
+a `MockTasks`, the Mockery mock of the `containers.Tasks` interface, sets the
 calls it expects, and checks what the provider did with the answer:
 
-```go title="example/plugin/plugins/docker/resources/network_test.go"
+```go title="example/plugin/plugins/docker/providers/network_test.go"
 func TestNetworkCreateFillsTheDockerID(t *testing.T) {
-	client := mocks.NewMockDocker(t)
-	client.EXPECT().
-		NetworkCreate(context.Background(), "app", network.CreateOptions{
-			Driver:     "bridge",
-			Attachable: true,
-			Labels: map[string]string{
-				"created_by": "xcl-example-plugin",
-				"xcl_id":     "docker.network.app",
-			},
+	tasks := mocks.NewMockTasks(t)
+	tasks.EXPECT().
+		CreateNetwork(context.Background(), "app", containers.NetworkSpec{
+			Labels: networkTestLabels(),
 		}).
-		Return(network.CreateResponse{ID: "net-123"}, nil).
+		Return("net-123", nil).
 		Once()
 
-	provider := &networkProvider{client: client}
+	provider := &networkProvider{tasks: tasks}
 
-	created, err := provider.Create(context.Background(), testNetwork())
+	created, err := provider.Create(context.Background(), networkTestNetwork())
 
 	require.NoError(t, err)
 	require.Equal(t, "net-123", created.DockerID)
 }
 ```
 
-The mock lives in `plugins/docker/client/mocks` and is generated, not written:
-after a change to `client.Docker`, `make generate` regenerates it with the
-Mockery release pinned in the `Makefile`.
+The task layer is tested the same way one level down, against a
+`MockDocker`, the mock of the `docker.Docker` interface, checking the SDK
+calls each task makes. The mocks are generated, not written:
+`MockTasks` lives in `client/containers/mocks` and `MockDocker` in
+`client/docker/mocks`, and after a change to either interface
+`make generate`, run in `plugins/docker`, regenerates them with the Mockery
+release pinned in the plugin's `Makefile`.
 
-The tests that need a real engine, those that run the providers against
-Docker and the end to end test of the program, call `client.Ping` first and
-skip when no engine answers, so `make test` passes on a machine without
-Docker:
+The tests that need a real engine skip when no engine answers, so
+`make test` passes on a machine without Docker. Those that run the providers
+against Docker call the client layer's `docker.Ping` first:
 
-```go title="example/plugin/plugins/docker/resources/docker_test.go"
+```go title="example/plugin/plugins/docker/providers/docker_test.go"
 // requireDocker skips the test when no Docker engine is reachable
 func requireDocker(t *testing.T) {
 	t.Helper()
 
-	if err := client.Ping(context.Background()); err != nil {
+	if err := docker.Ping(context.Background()); err != nil {
 		t.Skip(err.Error()) // Ping already says no Docker engine is reachable
 	}
 }
 ```
+
+The end to end tests of the program do the same with its own `pingDocker`.
 
 The `plan` tests in `plan_test.go` are among them. They apply the example
 configuration into a temporary state directory, then check that planning the
@@ -1731,9 +1832,14 @@ After `destroy`, `status` prints `nothing applied`.
   works from the saved state alone, and removes the welcome template before
   the container, and the container before the init template and the network,
   the reverse of the order they were created in.
-- **The tests run without Docker.** The providers hold a narrow `client.Docker`
-  interface, so their unit tests use a generated mock, and the tests that
-  need a real engine skip when `client.Ping` finds none.
+- **The tests run without Docker.** The providers hold the `containers.Tasks`
+  interface and the task layer a narrow `docker.Docker` interface, so the unit
+  tests of each use a generated mock, and the tests that need a real engine
+  skip when `docker.Ping`, or the program's `pingDocker`, finds none.
+- **The host imports only the entities.** The plugin is a module of its own
+  in the standard layout, and the program reads the blocks it applied
+  through `plugins/docker/entities` alone, so its build includes no Docker
+  library.
 
 </Prose>
 
