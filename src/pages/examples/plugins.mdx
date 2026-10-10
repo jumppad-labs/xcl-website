@@ -66,7 +66,7 @@ The configuration is a network, an init script rendered by a template, a
 container on the network that runs the script when it starts, and a template
 that describes where the container can be reached:
 
-```hcl title="example/plugin/config/main.xcl"
+```hcl title="example/plugin/config/full/main.xcl"
 # The configuration the plugin example applies. The docker blocks come from
 # the external Docker plugin, the template block from the in-process template
 # plugin.
@@ -925,7 +925,7 @@ type Template struct {
 The `template "init"` block in the configuration renders the script with that
 mode, and the container's `init_script` reads its destination:
 
-```hcl title="example/plugin/config/main.xcl"
+```hcl title="example/plugin/config/full/main.xcl"
 template "init" {
   source = <<-EOF
   #!/bin/sh
@@ -1334,18 +1334,18 @@ The address range change has tests of its own. The unit tests check each
 provider's `Changed` and `Update` against a mock, such as a new subnet
 answering replace, a replaced network answering update for the container, and
 an `Update` told the network was replaced connecting the container to it
-again. Against a real engine, `main_test.go` applies `./config` and then
-`./config-subnet` to the same state directory, and checks that the real
+again. Against a real engine, `main_test.go` applies `./config/full` and then
+`./config/alt-subnet` to the same state directory, and checks that the real
 network Docker reports has the new range `10.42.0.0/23` and that the old
 network is gone, that the container keeps its Docker ID, running and attached
 to the new network, that the template was rendered again with the container's
-address, and that planning `./config-subnet` afterwards reports no changes.
-`plan_test.go` checks the plan of `./config-subnet` after `./config`: the
+address, and that planning `./config/alt-subnet` afterwards reports no changes.
+`plan_test.go` checks the plan of `./config/alt-subnet` after `./config/full`: the
 network replaced because it cannot be updated in place, the container updated
 because the network is replaced, and the template updated.
 
 `scenarios_test.go` runs the other variants the same way, each applied after
-`./config` against real Docker. Moving the container to a new network keeps
+`./config/full` against real Docker. Moving the container to a new network keeps
 the same running container, now on `backend` and off `app`. Moving the init
 script's destination creates a new container with the moved script mounted,
 while editing the script's content keeps the same container and renders the
@@ -1368,7 +1368,7 @@ which is the same as:
 
 ```bash
 make build
-./build/xcl-docker apply ./config
+./build/xcl-docker apply ./config/full
 ./build/xcl-docker status
 ./build/xcl-docker destroy
 ```
@@ -1391,9 +1391,9 @@ receiver prints the resource as configuration text, with the values the
 provider set marked:
 
 ```text
-9:16AM INFO create start source=core operation=create phase=start resource=template.init type=template.init file=config/main.xcl
-9:16AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.init type=template.init file=config/main.xcl destination=./build/rendered/init.sh
-9:16AM INFO create success source=core operation=create phase=success resource=template.init type=template.init file=config/main.xcl duration=154.421µs
+9:16AM INFO create start source=core operation=create phase=start resource=template.init type=template.init file=config/full/main.xcl
+9:16AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.init type=template.init file=config/full/main.xcl destination=./build/rendered/init.sh
+9:16AM INFO create success source=core operation=create phase=success resource=template.init type=template.init file=config/full/main.xcl duration=154.421µs
   template "init" {
     source      = "#!/bin/sh\necho \"web joined the {{network}} network\" > /usr/share/nginx/html/init.txt\n"
     destination = "./build/rendered/init.sh"
@@ -1402,9 +1402,9 @@ provider set marked:
     }
     mode = "0755"
   }
-9:16AM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config/main.xcl
-9:16AM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.2 name=web
-9:16AM INFO create success source=core operation=create phase=success resource=docker.container.web type=container.web file=config/main.xcl duration=272.641998ms
+9:16AM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config/full/main.xcl
+9:16AM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config/full/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.2 name=web
+9:16AM INFO create success source=core operation=create phase=success resource=docker.container.web type=container.web file=config/full/main.xcl duration=272.641998ms
   docker "container" "web" {
     image       = "nginx:1.27-alpine"
     init_script = "./build/rendered/init.sh"
@@ -1417,9 +1417,9 @@ provider set marked:
     docker_id  = "ccc41ac142a180c52a0f9ecfbd2fe2ae66850ef79d4004b34dace51acd2419eb" # set by the provider
     ip_address = "10.42.0.2" # set by the provider
   }
-9:16AM INFO create start source=core operation=create phase=start resource=template.welcome type=template.welcome file=config/main.xcl
-9:16AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
-9:16AM INFO create success source=core operation=create phase=success resource=template.welcome type=template.welcome file=config/main.xcl duration=121.441µs
+9:16AM INFO create start source=core operation=create phase=start resource=template.welcome type=template.welcome file=config/full/main.xcl
+9:16AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.welcome type=template.welcome file=config/full/main.xcl destination=./build/rendered/welcome.txt
+9:16AM INFO create success source=core operation=create phase=success resource=template.welcome type=template.welcome file=config/full/main.xcl duration=121.441µs
   template "welcome" {
     source      = "Welcome to the {{network}} network.\nThe web container answers at http://{{address}}/\n"
     destination = "./build/rendered/welcome.txt"
@@ -1447,10 +1447,10 @@ start and success):
 
 ```text
 9:16AM INFO destroy start source=core operation=destroy phase=start
-9:16AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
-9:16AM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/main.xcl name=web
-9:16AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.init type=template.init file=config/main.xcl destination=./build/rendered/init.sh
-9:16AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=c42d8263fbe208fb554b472e004822a50eaa132375cdfa096652ff3c63fb3182 name=app
+9:16AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.welcome type=template.welcome file=config/full/main.xcl destination=./build/rendered/welcome.txt
+9:16AM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/full/main.xcl name=web
+9:16AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.init type=template.init file=config/full/main.xcl destination=./build/rendered/init.sh
+9:16AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/full/main.xcl id=c42d8263fbe208fb554b472e004822a50eaa132375cdfa096652ff3c63fb3182 name=app
 9:16AM INFO destroy success source=core operation=destroy phase=success duration=556.043249ms
 ```
 
@@ -1529,16 +1529,16 @@ when it started: `docker exec web cat /usr/share/nginx/html/init.txt` prints
 ### Replacing the network: `make replace`
 
 Before destroying, `plan` shows what applying a changed configuration would
-do. Planning `./config` as it was applied prints only
+do. Planning `./config/full` as it was applied prints only
 `Diff: no changes, 4 unchanged.` The example's variant configurations
 each sit in a directory of their own and are each a complete configuration, so
-`./config` applies on its own as before. `./config-subnet` is `./config` with
+`./config/full` applies on its own as before. `./config/alt-subnet` is `./config/full` with
 the network's address range widened from `10.42.0.0/24` to `10.42.0.0/23`.
-`make replace` applies `./config`, plans and applies `./config-subnet`, prints
-the status and destroys everything. The plan, with `./config` applied:
+`make replace` applies `./config/full`, plans and applies `./config/alt-subnet`, prints
+the status and destroys everything. The plan, with `./config/full` applied:
 
 ```bash
-./build/xcl-docker plan ./config-subnet
+./build/xcl-docker plan ./config/alt-subnet
 ```
 
 prints, plain here and coloured in a terminal:
@@ -1570,32 +1570,32 @@ the Docker plugin reads again when it updates the container. The init
 template only reads the network's name, which does not change, so it is
 unchanged. Nothing was changed or saved by the plan.
 
-Applying `./config-subnet` reads and decides every resource first, then
+Applying `./config/alt-subnet` reads and decides every resource first, then
 destroys the network, which force-disconnects the running container, creates
 the network on the new range, updates the container, which connects it again,
 and updates the template, in dependency order. Trimmed to the provider calls,
 without the resources printed after each `create success`:
 
 ```text
-9:13AM INFO changed success source=core operation=changed phase=success resource=docker.network.app type=network.app file=config-subnet/main.xcl duration=261.132µs
-9:13AM INFO changed success source=core operation=changed phase=success resource=template.init type=template.init file=config-subnet/main.xcl duration=25.4µs
-9:13AM INFO changed success source=core operation=changed phase=success resource=docker.container.web type=container.web file=config-subnet/main.xcl duration=178.281µs
-9:13AM INFO changed success source=core operation=changed phase=success resource=template.welcome type=template.welcome file=config-subnet/main.xcl duration=22.8µs
-9:13AM INFO destroy start source=core operation=destroy phase=start resource=docker.network.app type=network.app file=config/main.xcl
-9:13AM INFO disconnected container from network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl container=19e3e1e5dc0c9337844056a91078618ba7edb069c70f917af0ac60f88cb15ca3 name=app
-9:13AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=136cd65886da2bb84b734e171ae95ff290788de9d1e1c401bb144b27704bd751 name=app
-9:13AM INFO create start source=core operation=create phase=start resource=docker.network.app type=network.app file=config-subnet/main.xcl
-9:13AM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.app type=network.app file=config-subnet/main.xcl id=1ab08a074f46cf0cef7dc4ce6678db70f101e5bcb44a10919ead399761d50693 name=app
-9:13AM INFO update start source=core operation=update phase=start resource=docker.container.web type=container.web file=config-subnet/main.xcl
-9:13AM INFO connected container to network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config-subnet/main.xcl name=web network=app
-9:13AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-subnet/main.xcl
-9:13AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-subnet/main.xcl destination=./build/rendered/welcome.txt
+9:13AM INFO changed success source=core operation=changed phase=success resource=docker.network.app type=network.app file=config/alt-subnet/main.xcl duration=261.132µs
+9:13AM INFO changed success source=core operation=changed phase=success resource=template.init type=template.init file=config/alt-subnet/main.xcl duration=25.4µs
+9:13AM INFO changed success source=core operation=changed phase=success resource=docker.container.web type=container.web file=config/alt-subnet/main.xcl duration=178.281µs
+9:13AM INFO changed success source=core operation=changed phase=success resource=template.welcome type=template.welcome file=config/alt-subnet/main.xcl duration=22.8µs
+9:13AM INFO destroy start source=core operation=destroy phase=start resource=docker.network.app type=network.app file=config/full/main.xcl
+9:13AM INFO disconnected container from network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/full/main.xcl container=19e3e1e5dc0c9337844056a91078618ba7edb069c70f917af0ac60f88cb15ca3 name=app
+9:13AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/full/main.xcl id=136cd65886da2bb84b734e171ae95ff290788de9d1e1c401bb144b27704bd751 name=app
+9:13AM INFO create start source=core operation=create phase=start resource=docker.network.app type=network.app file=config/alt-subnet/main.xcl
+9:13AM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.app type=network.app file=config/alt-subnet/main.xcl id=1ab08a074f46cf0cef7dc4ce6678db70f101e5bcb44a10919ead399761d50693 name=app
+9:13AM INFO update start source=core operation=update phase=start resource=docker.container.web type=container.web file=config/alt-subnet/main.xcl
+9:13AM INFO connected container to network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config/alt-subnet/main.xcl name=web network=app
+9:13AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config/alt-subnet/main.xcl
+9:13AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config/alt-subnet/main.xcl destination=./build/rendered/welcome.txt
 9:13AM INFO apply success source=core operation=apply phase=success duration=196.256325ms
 ```
 
 A replacement is a `destroy` and a `create` for the same resource, there is
-no separate replace event. The destroy names `config/main.xcl`, the file the
-saved resource came from, and the create `config-subnet/main.xcl`. The new
+no separate replace event. The destroy names `config/full/main.xcl`, the file the
+saved resource came from, and the create `config/alt-subnet/main.xcl`. The new
 network has a new Docker ID and the new range, and the container is the same
 one, with the same Docker ID, now attached to it. `status` shows the new
 network:
@@ -1607,13 +1607,13 @@ network:
         └── ● template.welcome  ./build/rendered/welcome.txt
 ```
 
-and planning `./config-subnet` again prints `Diff: no changes, 4 unchanged.`
+and planning `./config/alt-subnet` again prints `Diff: no changes, 4 unchanged.`
 
 ### Moving the container: `make swap`
 
-`./config-swap` adds a second network, `backend` on `10.43.0.0/24`, and moves
+`./testdata/swap` adds a second network, `backend` on `10.43.0.0/24`, and moves
 the container's `network` block from `app` to `backend`. `make swap` applies
-`./config`, then plans and applies `./config-swap`. The plan:
+`./config/full`, then plans and applies `./testdata/swap`. The plan:
 
 ```text
   # docker.container.web will be updated
@@ -1641,13 +1641,13 @@ change's `Before` that it was on `app`, disconnects it from `app` and
 connects it to `backend`:
 
 ```text
-9:12AM INFO create start source=core operation=create phase=start resource=docker.network.backend type=network.backend file=config-swap/main.xcl
-9:12AM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.backend type=network.backend file=config-swap/main.xcl id=7d7ed04f1b31a78024cdd7d91081eea532aaad38f03435bafd7467e9640385d1 name=backend
-9:12AM INFO update start source=core operation=update phase=start resource=docker.container.web type=container.web file=config-swap/main.xcl
-9:12AM INFO disconnected container from network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config-swap/main.xcl name=web network=app
-9:12AM INFO connected container to network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config-swap/main.xcl name=web network=backend
-9:12AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-swap/main.xcl
-9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-swap/main.xcl destination=./build/rendered/welcome.txt
+9:12AM INFO create start source=core operation=create phase=start resource=docker.network.backend type=network.backend file=testdata/swap/main.xcl
+9:12AM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.backend type=network.backend file=testdata/swap/main.xcl id=7d7ed04f1b31a78024cdd7d91081eea532aaad38f03435bafd7467e9640385d1 name=backend
+9:12AM INFO update start source=core operation=update phase=start resource=docker.container.web type=container.web file=testdata/swap/main.xcl
+9:12AM INFO disconnected container from network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=testdata/swap/main.xcl name=web network=app
+9:12AM INFO connected container to network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=testdata/swap/main.xcl name=web network=backend
+9:12AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=testdata/swap/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=testdata/swap/main.xcl destination=./build/rendered/welcome.txt
 9:12AM INFO apply success source=core operation=apply phase=success duration=206.616252ms
 ```
 
@@ -1664,9 +1664,9 @@ The container keeps its Docker ID and now has an address on `backend`.
 
 ### Moving the init script: `make rebuild-init`
 
-`./config-init` renders the init script to `init-v2.sh` instead of `init.sh`.
-`make rebuild-init` applies `./config`, then plans and applies
-`./config-init`. The plan:
+`./config/modified-init` renders the init script to `init-v2.sh` instead of `init.sh`.
+`make rebuild-init` applies `./config/full`, then plans and applies
+`./config/modified-init`. The plan:
 
 ```text
   # docker.container.web will be replaced because template.init is replaced
@@ -1695,16 +1695,16 @@ container. Applying it destroys the container and the template, renders the
 script to its new path and creates a new container that mounts it:
 
 ```text
-9:12AM INFO destroy start source=core operation=destroy phase=start resource=docker.container.web type=container.web file=config/main.xcl
-9:12AM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/main.xcl name=web
-9:12AM INFO destroy start source=core operation=destroy phase=start resource=template.init type=template.init file=config/main.xcl
-9:12AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.init type=template.init file=config/main.xcl destination=./build/rendered/init.sh
-9:12AM INFO create start source=core operation=create phase=start resource=template.init type=template.init file=config-init/main.xcl
-9:12AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.init type=template.init file=config-init/main.xcl destination=./build/rendered/init-v2.sh
-9:12AM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config-init/main.xcl
-9:12AM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config-init/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.3 name=web
-9:12AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-init/main.xcl
-9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-init/main.xcl destination=./build/rendered/welcome.txt
+9:12AM INFO destroy start source=core operation=destroy phase=start resource=docker.container.web type=container.web file=config/full/main.xcl
+9:12AM INFO destroyed container source=docker-plugin operation=destroy phase=log resource=docker.container.web type=container.web file=config/full/main.xcl name=web
+9:12AM INFO destroy start source=core operation=destroy phase=start resource=template.init type=template.init file=config/full/main.xcl
+9:12AM INFO removed template source=TemplatePlugin operation=destroy phase=log resource=template.init type=template.init file=config/full/main.xcl destination=./build/rendered/init.sh
+9:12AM INFO create start source=core operation=create phase=start resource=template.init type=template.init file=config/modified-init/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.init type=template.init file=config/modified-init/main.xcl destination=./build/rendered/init-v2.sh
+9:12AM INFO create start source=core operation=create phase=start resource=docker.container.web type=container.web file=config/modified-init/main.xcl
+9:12AM INFO created container source=docker-plugin operation=create phase=log resource=docker.container.web type=container.web file=config/modified-init/main.xcl image=nginx:1.27-alpine ip_address=10.42.0.3 name=web
+9:12AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config/modified-init/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config/modified-init/main.xcl destination=./build/rendered/welcome.txt
 9:12AM INFO apply success source=core operation=apply phase=success duration=557.54905ms
 ```
 
@@ -1717,7 +1717,7 @@ The container has a new Docker ID, and with it a new address:
         └── ● template.welcome  ./build/rendered/welcome.txt
 ```
 
-Editing only the script's content, as `./config-init-content` does, is
+Editing only the script's content, as `./testdata/init-content` does, is
 different. The template renders the file again in place, and the container,
 told only that a dependency was updated, is left alone:
 
@@ -1732,10 +1732,10 @@ Diff: 0 to create, 1 to update, 0 to replace, 0 to delete, 3 unchanged.
 
 ### Removing the network: `make remove-network`
 
-`./config-remove` removes the `app` network together with every reference to
+`./config/no-network` removes the `app` network together with every reference to
 it: the container's `network` block and the templates' `network` variables.
-`make remove-network` applies `./config`, then plans and applies
-`./config-remove`. The plan:
+`make remove-network` applies `./config/full`, then plans and applies
+`./config/no-network`. The plan:
 
 ```text
   # docker.container.web will be updated
@@ -1769,15 +1769,15 @@ the templates and the container, whose `Update` disconnects it from `app`,
 already gone, which it ignores:
 
 ```text
-9:12AM INFO destroy start source=core operation=destroy phase=start resource=docker.network.app type=network.app file=config/main.xcl
-9:12AM INFO disconnected container from network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl container=abf23052f240bbeac8d673454442312b57eaf46a2bb42638e8c297889b8443c8 name=app
-9:12AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/main.xcl id=fc498460f2d0e7a166e7f1afcce09153979d2e62130aba5ba576eae0633bbda3 name=app
-9:12AM INFO update start source=core operation=update phase=start resource=template.init type=template.init file=config-remove/main.xcl
-9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.init type=template.init file=config-remove/main.xcl destination=./build/rendered/init.sh
-9:12AM INFO update start source=core operation=update phase=start resource=docker.container.web type=container.web file=config-remove/main.xcl
-9:12AM INFO disconnected container from network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config-remove/main.xcl name=web network=app
-9:12AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config-remove/main.xcl
-9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config-remove/main.xcl destination=./build/rendered/welcome.txt
+9:12AM INFO destroy start source=core operation=destroy phase=start resource=docker.network.app type=network.app file=config/full/main.xcl
+9:12AM INFO disconnected container from network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/full/main.xcl container=abf23052f240bbeac8d673454442312b57eaf46a2bb42638e8c297889b8443c8 name=app
+9:12AM INFO destroyed network source=docker-plugin operation=destroy phase=log resource=docker.network.app type=network.app file=config/full/main.xcl id=fc498460f2d0e7a166e7f1afcce09153979d2e62130aba5ba576eae0633bbda3 name=app
+9:12AM INFO update start source=core operation=update phase=start resource=template.init type=template.init file=config/no-network/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.init type=template.init file=config/no-network/main.xcl destination=./build/rendered/init.sh
+9:12AM INFO update start source=core operation=update phase=start resource=docker.container.web type=container.web file=config/no-network/main.xcl
+9:12AM INFO disconnected container from network source=docker-plugin operation=update phase=log resource=docker.container.web type=container.web file=config/no-network/main.xcl name=web network=app
+9:12AM INFO update start source=core operation=update phase=start resource=template.welcome type=template.welcome file=config/no-network/main.xcl
+9:12AM INFO rendered template source=TemplatePlugin operation=update phase=log resource=template.welcome type=template.welcome file=config/no-network/main.xcl destination=./build/rendered/welcome.txt
 9:12AM INFO apply success source=core operation=apply phase=success duration=127.714717ms
 ```
 
@@ -1790,7 +1790,7 @@ address any more, and the network is gone from the tree:
     └── ● template.welcome  ./build/rendered/welcome.txt
 ```
 
-Removing only the network block, as `./config-dangling` does, while the
+Removing only the network block, as `./testdata/dangling` does, while the
 container and the templates still refer to it, fails validation: the error
 says that `docker.container.web` refers to `docker.network.app.meta.name`,
 which is not defined anywhere in the configuration, and nothing is created,

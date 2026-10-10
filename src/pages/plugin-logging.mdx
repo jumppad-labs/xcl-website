@@ -76,9 +76,9 @@ So the one-line `Info` above arrives between the call's `start` and its
 examples' receiver it looks like this:
 
 ```text
-3:53PM INFO create start source=core operation=create phase=start resource=docker.network.app type=network.app file=config/main.xcl
-3:53PM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.app type=network.app file=config/main.xcl id=2f783968958bf8d9ee7914b98f809c0ced9b93509ad59946d0ff1f250f0c3764 name=app
-3:53PM INFO create success source=core operation=create phase=success resource=docker.network.app type=network.app file=config/main.xcl duration=3.469262ms
+3:53PM INFO create start source=core operation=create phase=start resource=docker.network.app type=network.app file=config/full/main.xcl
+3:53PM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.app type=network.app file=config/full/main.xcl id=2f783968958bf8d9ee7914b98f809c0ced9b93509ad59946d0ff1f250f0c3764 name=app
+3:53PM INFO create success source=core operation=create phase=success resource=docker.network.app type=network.app file=config/full/main.xcl duration=3.469262ms
 ```
 
 The message is in the event's `Meta` under `message`, its level under
@@ -118,8 +118,8 @@ of the external binary, and `TemplatePlugin`, the Go type name of the
 in-process plugin:
 
 ```text
-3:53PM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.app type=network.app file=config/main.xcl id=2f783968958bf8d9ee7914b98f809c0ced9b93509ad59946d0ff1f250f0c3764 name=app
-3:53PM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.welcome type=template.welcome file=config/main.xcl destination=./build/rendered/welcome.txt
+3:53PM INFO created network source=docker-plugin operation=create phase=log resource=docker.network.app type=network.app file=config/full/main.xcl id=2f783968958bf8d9ee7914b98f809c0ced9b93509ad59946d0ff1f250f0c3764 name=app
+3:53PM INFO rendered template source=TemplatePlugin operation=create phase=log resource=template.welcome type=template.welcome file=config/full/main.xcl destination=./build/rendered/welcome.txt
 ```
 
 One difference to know about: details cross the process boundary as text.
@@ -233,7 +233,7 @@ func explainPluginLoad(err error) error {
 }
 ```
 
-Run as `xcl-docker apply --plugin ./build/missing ./config`, a Docker plugin
+Run as `xcl-docker apply --plugin ./build/missing ./config/full`, a Docker plugin
 path with no binary behind it, the example reports:
 
 ```text

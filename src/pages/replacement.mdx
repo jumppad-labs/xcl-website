@@ -419,10 +419,10 @@ network and force-disconnects every attached container before removing it.
 The container's `Update` then attaches it to the network that replaces it,
 which is why it connects again to every replaced network.
 
-The example's `config-subnet` directory is its main configuration with the
+The example's `config/alt-subnet` directory is its main configuration with the
 network's subnet changed from `10.42.0.0/24` to `10.42.0.0/23`:
 
-```hcl title="example/plugin/config-subnet/main.xcl"
+```hcl title="example/plugin/config/alt-subnet/main.xcl"
 docker "network" "app" {
   subnet = "10.42.0.0/23"
 }
@@ -476,7 +476,7 @@ behind its update. A replacement's reason is one of three:
 | `will be replaced because a, b are replaced` | it was told about replaced dependencies and answered replace |
 | `will be replaced, its last apply failed` | it was saved `failed` or `destroy_failed`, and its provider was not asked |
 
-The plugins example's `config-init` shows the second: moving the init
+The plugins example's `config/modified-init` shows the second: moving the init
 script's destination replaces `template.init`, and the container that mounts
 it answers replace,
 `# docker.container.web will be replaced because template.init is replaced`.
@@ -487,7 +487,7 @@ the apply shows `Diff: no changes, 4 unchanged.` See [Diffs](/diff/) for
 reading a plan from Go and rendering it.
 
 Run it yourself with `make replace` in `example/plugin` (it needs Docker): it
-applies the main configuration, shows the plan for `config-subnet`, applies it
+applies the main configuration, shows the plan for `config/alt-subnet`, applies it
 and destroys everything again. `make swap`, `make rebuild-init` and
 `make remove-network` walk through the other variants the same way.
 
