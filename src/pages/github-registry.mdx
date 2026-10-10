@@ -1,0 +1,187 @@
+---
+layout: ../layouts/Shell.astro
+title: "Installing plugins from GitHub - xcl"
+description: "Install xcl plugins straight from GitHub releases with the GitHub registry: one line per plugin, exact version pinning, trusted signing keys, private repositories and a local cache that works offline."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+
+<Hero
+  heading="Installing plugins from GitHub"
+  sub="Depend on a published plugin with one line. The GitHub registry downloads the release's build for the machine it runs on, checks it, keeps a copy and starts it as an external plugin, with no build step."
+/>
+
+<Prose>
+
+Without it, an application that uses an external plugin builds or ships the
+plugin binary itself. The GitHub registry removes that step: name the
+repository and the release, and xcl does the rest when plugins load.
+
+## Declaring a plugin
+
+Create a GitHub registry with `registry.NewGitHub`, register each plugin by
+repository and release tag, and give the registry to the `Config` like any
+other:
+
+```go title="main.go"
+gh := registry.NewGitHub()
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "v1.2.0")
+
+c, err := xcl.NewConfig(
+	xcl.WithRegistry(local), // your own types and plugins
+	xcl.WithRegistry(gh),    // plugins from GitHub releases
+)
+if err != nil {
+	return err
+}
+```
+
+Registering only records, as on the local registry. The plugin is named after
+the repository, here `xcl-plugin-docker`, and is installed, or found in the
+cache, at the start of the first `Validate`, `Apply`, `Destroy`, `Diff` or
+`Load`. A GitHub registry wraps a local registry, so `RegisterType` works on
+it too, and it loads in the order it was given beside any other registry.
+
+## Pinning a version
+
+A plugin is pinned to one exact release tag: `v<major>.<minor>.<patch>`, with
+an optional pre-release suffix such as `v1.2.0-rc.1`. There is no `latest` and
+no range, so the same configuration always runs the same plugin, and nothing
+checks for newer releases. A wrong declaration is a programmer error and
+panics at the `RegisterPlugin` line, naming the plugin, before anything is
+downloaded:
+
+```go title="main.go"
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "latest") // panics
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "~1.2")   // panics
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "1.2.0")  // panics, the tag has a v
+gh.RegisterPlugin("xcl-plugin-docker", "v1.2.0")              // panics, not owner/repo
+```
+
+Draft releases are never installed.
+
+## What a release must contain
+
+The registry installs exactly the layout the plugin template publishes, and
+nothing else. For a repository called `xcl-plugin-docker` at `v1.2.0`:
+
+- one archive per platform, `xcl-plugin-docker_1.2.0_<os>_<arch>.tar.gz`,
+  or `.zip` for `windows`, for linux, darwin and windows on amd64 and arm64.
+  A release may leave a platform out; installing on that platform then fails
+  saying there is no build for it.
+- the plugin binary at the root of each archive, `xcl-plugin-docker`, or
+  `xcl-plugin-docker.exe` on windows.
+- `xcl-plugin-docker_1.2.0_checksums.txt`, the SHA-256 of every archive in
+  the format `sha256sum` writes. It is required: a release without it, or an
+  archive that is not listed or does not match, is refused.
+- optionally `xcl-plugin-docker_1.2.0_checksums.txt.sig`, an ASCII-armoured
+  detached OpenPGP signature over the checksums file.
+
+The plugin template's `make dist` and release workflow produce all of this
+from a pushed version tag. Any other tool producing the same names and
+formats works too.
+
+## Trusting signing keys
+
+Give the registry the public keys you trust, and a plugin is used only when
+its release's checksums file is signed by one of them:
+
+```go title="main.go"
+key, err := os.ReadFile("./keys/acme-plugins.asc")
+if err != nil {
+	return err
+}
+
+gh := registry.NewGitHub(registry.GitHubTrustedKeys(string(key)))
+gh.RegisterPlugin("acme/xcl-plugin-billing", "v2.0.1")
+```
+
+A release signed by another key, or not signed at all, is refused and nothing
+is kept. Signing the checksums file signs every archive through its checksum.
+Without trusted keys signatures are not checked, and unsigned releases
+install. A key that cannot be read fails the load, naming the `github.com`
+registry.
+
+## Private repositories
+
+Releases of a private repository install when a GitHub token is available.
+The registry uses the token given with `registry.GitHubToken`, otherwise the
+`GITHUB_TOKEN` environment variable, then `GH_TOKEN`, and sends it with every
+request:
+
+```go title="main.go"
+gh := registry.NewGitHub(registry.GitHubToken(os.Getenv("ACME_PLUGINS_TOKEN")))
+gh.RegisterPlugin("acme/xcl-plugin-billing", "v2.0.1")
+```
+
+Public repositories need no token. GitHub answers a request for a private
+repository without a token as if it did not exist, so without one the error
+names the repository and says it was not found or needs a token.
+
+## The cache
+
+Installed plugins are kept under the xcl home directory, in
+`~/.xcl/cache/plugins`, one entry per repository, version and platform:
+
+```text
+~/.xcl/cache/plugins/github.com/jumppad-labs/xcl-plugin-docker/v1.2.0/linux_arm64/
+  xcl-plugin-docker_1.2.0_linux_arm64.tar.gz
+  xcl-plugin-docker_1.2.0_checksums.txt
+  xcl-plugin-docker_1.2.0_checksums.txt.sig
+  xcl-plugin-docker
+```
+
+Choose another location with `registry.GitHubCacheDir`, for example a
+directory inside your project or a CI cache:
+
+```go title="main.go"
+gh := registry.NewGitHub(registry.GitHubCacheDir("./.xcl/plugins"))
+```
+
+- **Offline.** A version already in the cache is used without contacting
+  GitHub, so applies work with no network access.
+- **Checked on every start.** Every time a cached plugin is started it is
+  verified again: the archive against the kept checksums file, the binary
+  against the archive's copy, and the signature against the application's
+  current trusted keys when it gives any. A changed file is refused before the
+  plugin runs.
+- **Written in one step.** A plugin is downloaded and verified in a temporary
+  directory and moved into place only once it passes, so a failed or
+  interrupted download leaves nothing usable behind.
+- **Never pruned.** Old versions stay until you delete them by hand.
+
+## Errors
+
+A plugin that cannot be installed fails the first operation with a
+`*xcl.PluginLoadError` naming the plugin and the `github.com` registry. It
+wraps a `*xcl.PluginInstallError`, which names the `Repository`, `Version` and
+`Platform`, and matches one of two errors:
+
+- `xcl.ErrPluginNotFound`: the release, or its build for this platform, does
+  not exist, or the repository is private and no token was given.
+- `xcl.ErrPluginVerification`: the release has no checksums file, a file does
+  not match its checksum, or a signature is missing or not from a trusted key.
+
+```go title="main.go"
+err := c.Apply("./config")
+
+var install *xcl.PluginInstallError
+if errors.As(err, &install) {
+	log.Printf("cannot install %s %s for %s", install.Repository, install.Version, install.Platform)
+}
+
+if errors.Is(err, xcl.ErrPluginVerification) {
+	log.Print("refusing a plugin that did not verify")
+}
+```
+
+</Prose>
+
+<CtaBanner
+  heading="Registries"
+  body="The GitHub registry is one of the registries a Config can be given. See how registries load, how problems are reported and how to write your own."
+>
+  <Button href="/registries/" label="Registries →" variant="primary" large />
+</CtaBanner>
