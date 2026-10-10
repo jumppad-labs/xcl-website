@@ -11,14 +11,14 @@ import { templateURL } from "../config/site";
 
 <Hero
   heading="Plugin template"
-  sub="Start a plugin from a working one. The template is a GitHub template repository with one resource that builds, tests and applies with nothing else running, runs in-process and as a separate program, and publishes signed releases the GitHub registry installs."
+  sub="Start a plugin from a working one. The template is a GitHub template repository with one entity type that builds, tests and applies with nothing else running, runs in-process and as a separate program, and publishes signed releases the GitHub registry installs."
 />
 
 <Prose>
 
 Every xcl plugin uses one layout, whether it runs inside an application or as
 a separate program. The [plugin template](https://github.com/jumppad-labs/xcl-plugin-template) is that layout's
-worked example. Its one resource, `notes "note"`, writes a note to a file, so
+worked example. Its one entity type, `notes "note"`, writes a note to a file, so
 it needs no Docker, no cloud account and no service: a repository made from
 it builds, passes its tests and applies its sample straight away.
 
@@ -40,9 +40,9 @@ notes "note" "greeting" {
 <plugin>/
   plugin.go                    the plugin type: Init builds the clients once and registers each type
   cmd/<plugin>/main.go         serves the plugin as a separate program
-  entities/<resource>.go       one block type per file, and nothing else
-  providers/<resource>.go      one provider per resource type
-  providers/<resource>_test.go strict-double unit tests
+  entities/<entity>.go         one block type per file, and nothing else
+  providers/<entity>.go        one provider per entity type
+  providers/<entity>_test.go   strict-double unit tests
   client/<backend>/            a narrow interface over each backend, its real implementation
   client/<backend>/mocks/      Mockery-generated doubles
   examples/<name>/main.xcl     sample configurations
@@ -53,8 +53,8 @@ notes "note" "greeting" {
 
 - **`entities/`** holds block types only. It imports nothing else from the
   plugin and no backend library, so an application that only reads a
-  plugin's resources from state imports `entities` alone.
-- **`providers/`** holds one provider per resource type, each built by a
+  plugin's entities from state imports `entities` alone.
+- **`providers/`** holds one provider per entity type, each built by a
   constructor that takes the clients it uses, so tests build it with doubles.
 - **`client/`** is the only place a backend is touched. Its interfaces hold
   only the calls the providers make, and it never imports providers or
@@ -98,7 +98,7 @@ gh repo create <you>/xcl-plugin-<name> --template jumppad-labs/xcl-plugin-templa
 
 Name the repository after your plugin: the GitHub registry installs a plugin
 by its repository name. The template's README lists the renames that make it
-yours and walks through adding a resource of your own.
+yours and walks through adding an entity type of your own.
 
 ## Build and test
 

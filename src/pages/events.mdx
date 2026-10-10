@@ -18,7 +18,7 @@ import Button from "../components/Button.astro";
 A library that prints is a library you have to fight. xcl never writes to
 standard output or standard error, and never touches the standard library's
 global logger. Instead, everything it and its plugins report, each step of
-the resource lifecycle, plugin discovery and loading, warnings, errors and
+the entity lifecycle, plugin discovery and loading, warnings, errors and
 the messages plugins log, is one stream of events delivered to the receiver
 set with `xcl.WithEventHandler`. With no receiver, xcl is silent.
 
@@ -50,7 +50,7 @@ followed by its details in key order.
 ## The event
 
 Every event is an `xcl.Event`, an alias of `events.Event`. There is one flat
-shape for all of them, whether it is xcl creating a resource or a plugin
+shape for all of them, whether it is xcl creating an entity or a plugin
 logging a message:
 
 | Field | Meaning |
@@ -59,10 +59,10 @@ logging a message:
 | `Source` | `core` for xcl itself, otherwise the name of the plugin it came from |
 | `Operation` | the operation or step the event belongs to |
 | `Phase` | where in that operation it is |
-| `ResourceType`, `ResourceID`, `File` | the resource the event is about, and the file it was declared in |
+| `ResourceType`, `ResourceID`, `File` | the entity the event is about, and the file it was declared in |
 | `Duration` | how long a step took, or how long emitting was blocked |
 | `Error` | the failure, for the `error` phase |
-| `Data` | the serialized resource, for lifecycle events only |
+| `Data` | the serialized entity, for lifecycle events only |
 | `Meta` | the details, keyed by name |
 
 A log message's level and text are in `Meta`, under the reserved keys
@@ -90,7 +90,7 @@ if err != nil {
 
 ## Sensitive values in event data
 
-Lifecycle events carry resource data only when you ask for it with
+Lifecycle events carry entity data only when you ask for it with
 `xcl.WithEventData`. When they do, every sensitive value in `Data` is written
 through the event masker. The default is `mask.Redact()`, which shows the
 marker inside an envelope naming the masker that produced it:
@@ -140,7 +140,7 @@ The operations and phases are defined as constants in the `events` package.
 | `validate`, `apply`, `destroy` | a whole call to `Validate`, `Apply` or `Destroy` |
 | `load_state` | a whole call to `Load`, reading the saved state |
 | `parse` | one block as it is read, with the file it came from |
-| `create`, `read`, `changed`, `update`, `destroy` | one provider call for one resource |
+| `create`, `read`, `changed`, `update`, `destroy` | one provider call for one entity |
 | `discover` | searching the directories given to a local registry's `RegisterPluginDirectory` |
 | `load` | starting and checking one plugin, and anything a plugin logs outside a provider call |
 | `events` | the event stream itself, for a `blocked` announcement |
@@ -156,12 +156,12 @@ The operations and phases are defined as constants in the `events` package.
 Each `Validate`, `Apply` and `Destroy` starts with its own `start` event and
 ends with a `success`, or an `error` carrying the error it returns. In
 between come the `load` events for any plugins loading, the `parse` events,
-and for each resource a `start` before each provider call, then any messages
+and for each entity a `start` before each provider call, then any messages
 the provider logs during that call, with the call's step as their operation,
 then the call's `success` or `error`. Every failure that is returned is also
 emitted as an error event, including each problem validation finds.
 
-This is how one resource looks through the example's receiver, the
+This is how one entity looks through the example's receiver, the
 [plugin example](/examples/plugins/) creating a Docker network:
 
 ```text
@@ -182,7 +182,7 @@ too, with the detail `component=go-plugin` so a receiver can tell them apart
 from the plugin's own.
 
 A plugin never sets these itself. How a plugin logs, and how its messages
-get their resource and step, is covered in
+get their entity and step, is covered in
 [Plugin logging and loading](/plugin-logging/).
 
 ## Delivery guarantees
@@ -301,7 +301,7 @@ its warnings and errors at their own level.
 
 <CtaBanner
   heading="Log from your own plugins"
-  body="Providers log through the logger in the call's context, and xcl adds the resource and step for them."
+  body="Providers log through the logger in the call's context, and xcl adds the entity and step for them."
 >
   <Button href="/plugin-logging/" label="Plugin logging and loading →" variant="primary" large />
   <Button href="/examples/plugins/" label="Plugins example →" variant="secondary" large />

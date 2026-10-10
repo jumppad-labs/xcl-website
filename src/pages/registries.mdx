@@ -59,7 +59,7 @@ an optional subtype:
 local := registry.NewLocal()
 local.RegisterType(&Deployment{}, "deployment")           // deployment "api" {}
 local.RegisterType(&Service{}, "service")                 // service "api" {}
-local.RegisterType(&PostgreSQL{}, "resource", "postgres") // resource "postgres" "main" {}
+local.RegisterType(&PostgreSQL{}, "database", "postgres") // database "postgres" "main" {}
 
 c, err := xcl.NewConfig(xcl.WithRegistry(local))
 if err != nil {
@@ -236,7 +236,7 @@ reported as a `*xcl.TypeNameClashError`:
 
 | Field | Meaning |
 |---|---|
-| `Name` | the clashing type, such as `resource.postgres`, or its type alone when it has no subtype |
+| `Name` | the clashing type, such as `database.postgres`, or its type alone when it has no subtype |
 | `Provider`, `Registry` | what provides it a second time, a plugin or `type <Go type>` for a declared type, and the registry it came from |
 | `Existing`, `ExistingRegistry` | what already provides it, `builtin`, a plugin, or `type <Go type>` for a declared type, and its registry |
 
@@ -329,7 +329,7 @@ func (t *Toolkit) Name() string {
 func (t *Toolkit) Types() []registry.Type {
 	return []registry.Type{
 		{Type: "settings", Prototype: &Settings{}},
-		{Type: "resource", Subtype: "bucket", Prototype: &Bucket{}},
+		{Type: "storage", Subtype: "bucket", Prototype: &Bucket{}},
 	}
 }
 

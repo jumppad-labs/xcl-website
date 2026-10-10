@@ -26,7 +26,7 @@ can colour the text it writes, for a terminal or any other format.
 Pass any entity a lookup returns:
 
 ```go title="main.go"
-db, err := xcl.Find[*Postgres](c, "resource.postgres.main")
+db, err := xcl.Find[*Postgres](c, "database.postgres.main")
 if err != nil {
 	return err
 }
@@ -40,7 +40,7 @@ fmt.Println(string(text))
 ```
 
 ```hcl
-resource "postgres" "main" {
+database "postgres" "main" {
   location = "localhost"
   port     = 5432
 
@@ -97,7 +97,7 @@ text, err := xcl.EncodeEntity(db, xcl.IncludeComputed())
 ```
 
 ```hcl
-resource "postgres" "main" {
+database "postgres" "main" {
   location          = "localhost"
   port              = 5432
   connection_string = "postgres://admin@localhost:5432/main" # set by the provider
@@ -120,23 +120,23 @@ it, though they still order creation and destruction. Given this
 configuration:
 
 ```hcl
-resource "app" "c" {
+app "c" {
   y = "blue"
 }
 
-resource "app" "a" {
-  depends_on = ["resource.app.b"]
+app "a" {
+  depends_on = ["app.b"]
 
-  x = resource.app.c.y
+  x = app.c.y
 }
 ```
 
-the text for `resource.app.a` names only the dependency you wrote, while the
-reference to `resource.app.c` comes out as the value it resolved to:
+the text for `app.a` names only the dependency you wrote, while the
+reference to `app.c` comes out as the value it resolved to:
 
 ```hcl
-resource "app" "a" {
-  depends_on = ["resource.app.b"]
+app "a" {
+  depends_on = ["app.b"]
 
   x = "blue"
 }
@@ -154,9 +154,9 @@ user wrote it instead, whether a bare reference, a template or a reference in a
 nested block. Given this configuration:
 
 ```hcl
-resource "app" "web" {
-  db_location = resource.postgres.main.location
-  url         = "https://${resource.postgres.main.location}/app"
+app "web" {
+  db_location = database.postgres.main.location
+  url         = "https://${database.postgres.main.location}/app"
 }
 ```
 
@@ -167,16 +167,16 @@ text, err := xcl.EncodeEntity(app, xcl.ShowReferences())
 the text shows each reference as it was written:
 
 ```hcl
-resource "app" "web" {
-  db_location = resource.postgres.main.location
-  url         = "https://${resource.postgres.main.location}/app"
+app "web" {
+  db_location = database.postgres.main.location
+  url         = "https://${database.postgres.main.location}/app"
 }
 ```
 
 Without the option the same entity is written with its resolved values:
 
 ```hcl
-resource "app" "web" {
+app "web" {
   db_location = "localhost"
   url         = "https://localhost/app"
 }

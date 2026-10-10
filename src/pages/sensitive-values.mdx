@@ -100,7 +100,7 @@ configuration, assigning one to a plain field fails validation, so `Validate`
 and `Apply` refuse the configuration before anything is created:
 
 ```text
-field "note" of resource.audit.main is not declared sensitive and cannot be
+field "note" of audit.main is not declared sensitive and cannot be
 assigned a sensitive value
 ```
 
@@ -110,8 +110,8 @@ names the field. There is no automatic unwrap: declare the field
 `types.Sensitive[T]` in your own type too.
 
 ```go
-_, err := xcl.Find[PlainDatabase](c, "resource.database.main")
-// entity "resource.database.main" field "password" is sensitive,
+_, err := xcl.Find[PlainDatabase](c, "database.postgres.main")
+// entity "database.postgres.main" field "password" is sensitive,
 // main.PlainDatabase declares it as a plain value
 ```
 
@@ -139,8 +139,8 @@ knowing that it is then unprotected.
 - **Configuration text** from `EncodeEntity` and `EncodeSavedEntity` writes
   `password = "(sensitive)"`. Pass `xcl.RevealSensitive()` to write the real
   value.
-- **The resource printer** shows the marker in every format.
-  `logger.WithRevealSensitive(true)` shows real values.
+- **The entity printer**, `logger.ResourcePrinter`, shows the marker in every
+  format. `logger.WithRevealSensitive(true)` shows real values.
 - **Diffs** from `Config.Diff` report that a sensitive value changed without
   either value, and `diff.Render` shows `(sensitive value)`. Pass
   `diff.RevealSensitive()` to include both values. See [Diffs](/diff/).

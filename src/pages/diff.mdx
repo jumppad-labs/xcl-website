@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/Shell.astro
 title: "Diffs - xcl"
-description: "See what an apply would do before you run it: which resources would be created, updated, replaced or deleted, which values change, and a readable, optionally coloured rendering of it all."
+description: "See what an apply would do before you run it: which entities would be created, updated, replaced or deleted, which values change, and a readable, optionally coloured rendering of it all."
 ---
 import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
@@ -10,15 +10,15 @@ import Button from "../components/Button.astro";
 
 <Hero
   heading="Diffs"
-  sub="See what an apply would do before you run it: every resource it would create, update, replace or delete, and every value that would change."
+  sub="See what an apply would do before you run it: every entity it would create, update, replace or delete, and every value that would change."
 />
 
 <Prose>
 
 A diff compares a configuration with the state its last apply saved, and
 reports what applying that configuration would do. Running one does nothing:
-no resource is created, changed or destroyed, and no state is saved. Each
-resource that is still configured is checked through its provider's read and
+no entity is created, changed or destroyed, and no state is saved. Each
+entity that is still configured is checked through its provider's read and
 change checks, as an apply would do, so a diff also shows changes made to the
 real infrastructure outside xcl.
 
@@ -43,9 +43,9 @@ if d.Changed() == 0 {
 fmt.Print(string(diff.Render(d)))
 ```
 
-The result is plain data. `d.Summary` counts the resources for each action and
+The result is plain data. `d.Summary` counts the entities for each action and
 the ones that would stay unchanged, and `d.Changed()` adds up the four actions.
-`d.Resources` lists every resource an apply would change, sorted by address,
+`d.Resources` lists every entity an apply would change, sorted by address,
 and each one carries its `Changes`, one for each configured value that would
 change:
 
@@ -59,63 +59,63 @@ for _, resource := range d.Resources {
 }
 ```
 
-A change's `Path` locates the value within the resource, such as `image`,
+A change's `Path` locates the value within the entity, such as `image`,
 `ports[0].host` or `env["LOG_LEVEL"]`. `Before` is the saved value and `After`
 the configured one. An added value has no `Before` and a removed one has no
 `After`.
 
 ## What each action means
 
-Each resource an apply would change gets exactly one action:
+Each entity an apply would change gets exactly one action:
 
 | Action | When |
 |---|---|
-| `create` | It is in the configuration but not in the saved state, or its provider reports that the real resource no longer exists. |
-| `update` | Its provider reports a change it can make in place, or one of its values is only known after apply. `Dependencies` names the resources behind it that the same apply updates or replaces, as its provider was told about them. |
+| `create` | It is in the configuration but not in the saved state, or its provider reports that the real entity no longer exists. |
+| `update` | Its provider reports a change it can make in place, or one of its values is only known after apply. `Dependencies` names the entities behind it that the same apply updates or replaces, as its provider was told about them. |
 | `replace` | An apply would destroy it and create it again, for one of the reasons below. |
 | `delete` | It is in the saved state but no longer in the configuration. |
 
-A resource is replaced for one of three reasons, and the diff records which in
-the resource's `Reason`:
+An entity is replaced for one of three reasons, and the diff records which in
+the entity's `Reason`:
 
 | Reason | When |
 |---|---|
 | `failed` | Its last apply failed. Its provider is not asked: an apply destroys it and creates it again, whether or not its configuration changed. |
 | `provider` | Its provider reports that it cannot make the change in place, such as a new address range for a network. |
-| `dependency` | Its provider answers replace because a resource it depends on is being replaced. `ReplacedDeps` names those resources, sorted by address. |
+| `dependency` | Its provider answers replace because an entity it depends on is being replaced. `ReplacedDeps` names those entities, sorted by address. |
 
-A provider decides between leaving a resource alone, updating it and replacing
+A provider decides between leaving an entity alone, updating it and replacing
 it by comparing the saved and configured values, and it is told which of the
-resources it depends on an apply will update or replace. See
+entities it depends on an apply will update or replace. See
 [Unchanged, update or replace](/replacement/) for how providers make that
 decision.
 
-A resource whose provider reports no change is unchanged. It is counted in
-the summary but not listed. Only resources an apply hands to a provider take
+An entity whose provider reports no change is unchanged. It is counted in
+the summary but not listed. Only entities an apply hands to a provider take
 part: variables, outputs, modules and disabled blocks are neither listed nor
 counted.
 
-An update can have no changes of its own. Most often that is because a
-resource it depends on is updated or replaced, and its provider answered
+An update can have no changes of its own. Most often that is because an
+entity it depends on is updated or replaced, and its provider answered
 update for it, such as a container reattached to a replaced network. Its
-`Dependencies` then lists those resources, sorted by address, each with its
+`Dependencies` then lists those entities, sorted by address, each with its
 `Address` and `Action`, and the rendering names them. Only an update with
 neither changes nor dependencies is one where the provider reports that the
-real resource differs from what was saved, but no configured value changed:
+real entity differs from what was saved, but no configured value changed:
 something changed it outside xcl, and an apply would update it.
 
 ## Known after apply
 
 Some values only exist once an apply has run, such as an id or an address a
-provider assigns when it creates a resource. A value that depends on one is
-marked `Unknown`, with no `After`. A resource that is already saved and
+provider assigns when it creates an entity. A value that depends on one is
+marked `Unknown`, with no `After`. An entity that is already saved and
 depends on such a value is reported as an update, since whether an apply would
 really change it cannot be known until then.
 
-A diff assumes that updating a resource can change the values its provider
-fills in. So a resource that refers to a value of a resource being updated is
+A diff assumes that updating an entity can change the values its provider
+fills in. So an entity that refers to a value of an entity being updated is
 also reported as an update, with that value known after apply, just as it
-would be for a resource being created.
+would be for an entity being created.
 
 ## Sensitive values
 
@@ -137,64 +137,64 @@ See [Sensitive values](/sensitive-values/) for marking a field sensitive.
 ## Reading the rendered output
 
 `diff.Render` turns a result into text in the style of a git diff, ready to
-print or log. This result has a resource for each action, and a replacement
+print or log. This result has an entity for each action, and a replacement
 for each reason:
 
 ```text
-  # resource.container.api will be updated
-  ~ resource "container" "api" {
+  # docker.container.api will be updated
+  ~ docker "container" "api" {
       ~ ports[0].host      = 8080 -> 9090
       + ports[2]           = { host = 443, local = 8443 }
       ~ env["DB_PASSWORD"] = (sensitive value)
     }
 
-  # resource.container.cache changed outside xcl and will be updated
-  ~ resource "container" "cache" {}
+  # docker.container.cache changed outside xcl and will be updated
+  ~ docker "container" "cache" {}
 
-  # resource.container.proxy will be updated because resource.network.app is replaced
-  ~ resource "container" "proxy" {}
+  # docker.container.proxy will be updated because docker.network.app is replaced
+  ~ docker "container" "proxy" {}
 
-  # resource.container.web will be created
-  + resource "container" "web" {
+  # docker.container.web will be created
+  + docker "container" "web" {
       + image   = "nginx"
       + db_host = (known after apply)
     }
 
-  # resource.container.worker will be replaced because resource.network.app is replaced
--/+ resource "container" "worker" {}
+  # docker.container.worker will be replaced because docker.network.app is replaced
+-/+ docker "container" "worker" {}
 
-  # resource.network.app will be replaced, it cannot be updated in place
--/+ resource "network" "app" {
+  # docker.network.app will be replaced, it cannot be updated in place
+-/+ docker "network" "app" {
       ~ subnet = "10.42.0.0/24" -> "10.42.0.0/23"
     }
 
-  # resource.network.backup will be replaced, its last apply failed
--/+ resource "network" "backup" {}
+  # docker.network.backup will be replaced, its last apply failed
+-/+ docker "network" "backup" {}
 
-  # resource.postgres.old will be deleted
-  - resource "postgres" "old" {}
+  # database.postgres.old will be deleted
+  - database "postgres" "old" {}
 
 Diff: 1 to create, 3 to update, 3 to replace, 1 to delete, 4 unchanged.
 ```
 
-Each resource starts with a comment saying what an apply would do with it,
+Each entity starts with a comment saying what an apply would do with it,
 followed by its block header, marked with the action. For a replacement the
 comment also says why: its last apply failed, it cannot be updated in place,
-or the resources it depends on that are replaced, named one by one, as for
-`resource.container.worker` above. An update with no changes of its own names
-the dependencies behind it in the same way, as for `resource.container.proxy`,
+or the entities it depends on that are replaced, named one by one, as for
+`docker.container.worker` above. An update with no changes of its own names
+the dependencies behind it in the same way, as for `docker.container.proxy`,
 or `A, B are replaced and C is updated` when there are several. Only an update
 with neither changes nor dependencies says it `changed outside xcl and will be
-updated`, as for `resource.container.cache`. Inside the block there is one line for
-each change, with the `=` signs lined up. Resources appear in the result's order, which is sorted by address. A resource with no changes is
+updated`, as for `docker.container.cache`. Inside the block there is one line for
+each change, with the `=` signs lined up. Entities appear in the result's order, which is sorted by address. An entity with no changes is
 written as a header with an empty body.
 
 | Marker | Meaning |
 |---|---|
-| `+` | a resource that would be created, or a value that would be added |
-| `-` | a resource that would be deleted, or a value that would be removed |
-| `~` | a resource that would be updated, or a value that would change, written as `before -> after` |
-| `-/+` | a resource that would be replaced: destroyed, then created again |
+| `+` | an entity that would be created, or a value that would be added |
+| `-` | an entity that would be deleted, or a value that would be removed |
+| `~` | an entity that would be updated, or a value that would change, written as `before -> after` |
+| `-/+` | an entity that would be replaced: destroyed, then created again |
 
 A value only known once an apply has run is written as `(known after apply)`.
 When it replaces a saved value, the line shows both, as
@@ -246,7 +246,7 @@ empty scope, so a renderer that escapes text sees every byte.
 ## The JSON form
 
 The result is also the machine-readable form of a diff. `json.Marshal(d)`
-writes the summary and the resources with their changes, each path in its
+writes the summary and the entities with their changes, each path in its
 written form, such as `"ports[0].host"`. Values that are absent, such as the
 values of a sensitive change that was not revealed, are left out. A
 replacement carries its `reason`, and one replaced because of its
@@ -259,16 +259,16 @@ none:
 {
   "summary": { "create": 1, "update": 1, "replace": 2, "delete": 0, "unchanged": 4 },
   "resources": [
-    { "address": "resource.container.proxy", "action": "update",
-      "dependencies": [ { "address": "resource.network.app",
+    { "address": "docker.container.proxy", "action": "update",
+      "dependencies": [ { "address": "docker.network.app",
                           "action": "replace" } ] },
-    { "address": "resource.container.web", "action": "create",
+    { "address": "docker.container.web", "action": "create",
       "changes": [ { "path": "image", "after": "nginx" },
                    { "path": "db_host", "unknown": true } ] },
-    { "address": "resource.container.worker", "action": "replace",
+    { "address": "docker.container.worker", "action": "replace",
       "reason": "dependency",
-      "replaced_dependencies": [ "resource.network.app" ] },
-    { "address": "resource.network.app", "action": "replace",
+      "replaced_dependencies": [ "docker.network.app" ] },
+    { "address": "docker.network.app", "action": "replace",
       "reason": "provider",
       "changes": [ { "path": "subnet", "before": "10.42.0.0/24",
                      "after": "10.42.0.0/23" } ] }

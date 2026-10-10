@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/Shell.astro
-title: "xcl: HCL, extended for Go"
-description: "xcl is a superset of HCL for Go. Define your configuration as Go structs and get references, variables, modules, functions, plugins and state on top of the language you already know."
+title: "XCL"
+description: "XCL is a relational configuration language built on the readability of HCL: references between blocks, graph-based processing, plugins, variables, modules, functions and state. Go implementation available now."
 ---
 import Hero from "../components/sections/Hero.astro";
 import Section from "../components/sections/Section.astro";
@@ -14,34 +14,36 @@ import FeatureCard from "../components/FeatureCard.astro";
 
 <Hero
   variant="centered"
-  heading="HCL, extended<br />for Go."
-  sub="xcl is a superset of HCL. Define your configuration as Go structs, and get references, variables, modules, functions, plugins and state on top of the language you already know."
+  heading="XCL: a modern relational configuration language"
+  sub="A configuration language built on the readability of HCL. Blocks relate to each other through references, are processed in dependency order and run through plugins, so configuration can be planned, applied, changed and destroyed. Available for Go today, with Python, JavaScript and more to come."
 >
-  <Badge slot="badge" text="v2 · early development" variant="green" dot />
+  <Badge slot="badge" text="v0.2.2 · Initial Release" variant="green" dot />
   <InstallBlock slot="install" command="go get github.com/jumppad-labs/xcl" />
   <Button href="/examples/configuration-only/" label="See an example →" variant="primary" large />
   <Button href="https://github.com/jumppad-labs/xcl" label="View on GitHub" variant="secondary" large external />
 </Hero>
 
-<Section heading="What is xcl?" surface>
+<Section heading="What is XCL?" surface>
 
+  XCL is a language for configuration that describes things and how they
+  relate. It takes the readable syntax of
   [HCL](https://github.com/hashicorp/hcl), the HashiCorp Configuration
-  Language, is a syntax: blocks, attributes and expressions. It is a great
-  language to write configuration in, but on its own it does not know what
-  your blocks mean, how they relate to each other, or what should happen when
-  they change.
+  Language (blocks, attributes and expressions), and builds a language for
+  processing configuration on top of it. A block can refer to any other
+  block, those references decide the order everything happens in, and
+  plugins give the blocks meaning by creating and managing the things they
+  describe.
 
-  xcl is a Go library that adds that layer. Every `.xcl` file is plain HCL
-  syntax, so editors, formatters and your existing knowledge all carry over.
-  On top of the syntax, xcl gives you a schema taken from your own Go structs,
-  references between blocks, a dependency graph that orders everything,
-  variables, outputs and modules, a library of functions, and a lifecycle
-  with state so a configuration can be applied, changed and destroyed.
+  XCL is its own language. It is not a way to read Terraform configuration,
+  and it does not promise compatibility with other HCL dialects. Today its
+  syntax matches HCL's, so editors and formatters carry over, but it will grow
+  where configuration needs it to.
 
-  You describe a block type once, as a Go struct with `xcl` tags:
+  The Go library is the first implementation. You describe a block type once,
+  as a Go struct with `xcl` tags:
 
 ```go title="resources.go"
-// PostgreSQL defines the block type `postgres`
+// PostgreSQL defines the block type `database "postgres"`
 type PostgreSQL struct {
 	types.ResourceBase `xcl:",remain"`
 
@@ -60,16 +62,23 @@ type PostgreSQL struct {
 }
 ```
 
-  Then write configuration against it. The reference to
-  `resource.postgres.main` is resolved for you, and it is what makes xcl
-  process `main` before `app.web`:
+  Every block type is registered with a type and, optionally, a subtype,
+  which become the block's labels. `PostgreSQL` is registered with the type
+  `database` and the subtype `postgres`, so it is written
+  `database "postgres" "main"` and referred to as `database.postgres.main`.
+  An `App` type registered with only the type `app` is written `app "web"`
+  and referred to as `app.web`.
+
+  Then write configuration against them. The references to
+  `database.postgres.main` are resolved for you, and they are what makes XCL
+  process the database before `app.web`:
 
 ```hcl title="main.xcl"
 variable "db_username" {
   default = "admin"
 }
 
-resource "postgres" "main" {
+database "postgres" "main" {
   location = "localhost"
   port     = 5432
   username = variable.db_username
@@ -80,16 +89,16 @@ resource "postgres" "main" {
   }
 }
 
-resource "app" "web" {
-  database_location = resource.postgres.main.location
-  connection_string = resource.postgres.main.connection_string
+app "web" {
+  database_location = database.postgres.main.location
+  connection_string = database.postgres.main.connection_string
 }
 ```
 
   And read it back as your own Go type:
 
 ```go title="main.go"
-// a plugin providing resource "postgres", with a provider that creates it
+// a plugin providing database "postgres" and app, with providers that create them
 local := registry.NewLocal()
 local.RegisterPlugin(&postgres.Plugin{})
 
@@ -106,7 +115,7 @@ if err := c.Apply("./config"); err != nil {
 	return err
 }
 
-db, err := xcl.Find[PostgreSQL](c, "resource.postgres.main")
+db, err := xcl.Find[PostgreSQL](c, "database.postgres.main")
 if err != nil {
 	return err
 }
@@ -129,7 +138,7 @@ fmt.Println(db.Location, db.Port)
 
   <FeatureCard icon="🔗" title="References between blocks">
     Any attribute can read another block, like
-    `resource.postgres.main.location`, or take a whole block as a value.
+    `database.postgres.main.location`, or take a whole block as a value.
     References are resolved in order, so a value always exists before it is
     read.
   </FeatureCard>
@@ -169,6 +178,16 @@ fmt.Println(db.Location, db.Port)
     is told the same. Plugins run in-process,
     or as a separate binary over gRPC.
     [Unchanged, update or replace →](/replacement/)
+  </FeatureCard>
+
+  <FeatureCard icon="🌐" title="Remote plugins">
+    Install plugins straight from GitHub releases with one line,
+    `RegisterPlugin("jumppad-labs/xcl-plugin-docker", "v0.2.0")`. Versions
+    are pinned, every download is checked against its checksum and signature,
+    and the plugin is cached for the next run. Private repositories work with
+    a token. Start your own from the
+    [plugin template](/plugin-template/).
+    [Plugins from GitHub →](/github-registry/)
   </FeatureCard>
 
   <FeatureCard icon="📝" title="Configuration only">
@@ -222,7 +241,7 @@ fmt.Println(db.Location, db.Port)
     address. Their providers create everything on apply and remove it on
     destroy.
   - [Configuration only](/examples/configuration-only/): a Kubernetes-like
-    deployment read into Go types, with resources linked to each other by
+    deployment read into Go types, with entities linked to each other by
     reference, and reported as the route each ingress path takes. No plugins.
 
 </Section>

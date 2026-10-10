@@ -21,15 +21,15 @@ a type with `Create`, `Read`, `Changed`, `Update` and `Destroy` methods that
 xcl calls as a configuration is applied and destroyed. Providers are packaged
 in **plugins**, and a plugin provides as many block types as it likes.
 
-On each apply, xcl first `Read`s every resource it saved last time and asks
+On each apply, xcl first `Read`s every entity it saved last time and asks
 its provider's `Changed` whether to leave it alone, `Update` it in place or
 replace it. A replacement is a `Destroy` followed by a `Create`. `Changed`
-and `Update` are both told which of the resource's settings changed since the
-last apply, and which of the resources it depends on the same apply will
+and `Update` are both told which of the entity's settings changed since the
+last apply, and which of the entities it depends on the same apply will
 update or replace, so a provider can decide, and act, from exactly what
-changed. Every resource is decided before anything changes,
+changed. Every entity is decided before anything changes,
 then the replaced ones are destroyed, dependents first, and finally
-resources are created and updated in dependency order. See
+entities are created and updated in dependency order. See
 [Unchanged, update or replace](/replacement/) for the full rules.
 
 This example applies a configuration with three block types, provided by two
@@ -355,10 +355,10 @@ one thing Docker cannot change in place, as
 [Update or replace](#update-or-replace) below shows.
 
 Each method logs through `plugins.Logger(ctx)`, the logger xcl puts in the
-call's context. It is already bound to the resource, its type, its file and
+call's context. It is already bound to the entity, its type, its file and
 the step, so the provider passes only what it has to say. That works the same
 inside the plugin process as it does in-process: the host gives each message
-its call's resource and step.
+its call's entity and step.
 
 ```go title="example/plugin/plugins/docker/providers/network.go"
 // Create asks Docker for a labelled bridge network named after the block, and
@@ -583,7 +583,7 @@ func (p *networkProvider) Changed(ctx context.Context, old *entities.Network, ne
 ```
 
 The container decides only from what it is told: `changes`, the settings
-that differ from the last apply, and `dependencies`, the resources it depends
+that differ from the last apply, and `dependencies`, the entities it depends
 on that this apply will update or replace. Docker fixes a container's image,
 command, environment and mounts when it creates it, so a change within
 `image`, `command`, `environment` or `init_script` replaces it. So does a
@@ -968,7 +968,7 @@ program:
 - `xcl-docker plan <path>` prints what applying the configuration at `path`
   would change, as a diff, without changing anything.
 - `xcl-docker status` prints what the saved state holds, as a tree.
-- `xcl-docker inspect <address>` prints one resource from the saved state as
+- `xcl-docker inspect <address>` prints one entity from the saved state as
   configuration text.
 - `xcl-docker destroy` removes everything in the saved state.
 
@@ -1063,7 +1063,7 @@ func eventHandler(out io.Writer) xcl.EventHandler {
 
 The receiver needs nothing else from the program. Each event returns the
 entity it carries with `Event.Entity()`, typed by the `Config` that delivered
-it, which is how the receiver shows each resource's
+it, which is how the receiver shows each entity's
 [configuration](/configuration-text/) as it is created.
 
 `apply` checks that a Docker engine answers before it applies anything, so a
@@ -1091,9 +1091,9 @@ func applyCommand(stderr io.Writer, configDir, dockerPlugin, stateDir string) er
 ```
 
 `plan` changes nothing either. It prints what applying a configuration would
-do to the saved state: each resource it would create, update, replace or
+do to the saved state: each entity it would create, update, replace or
 delete, and each value that would change. It still needs Docker, so it checks
-an engine answers first: a [diff](/diff/) reads each resource in the state
+an engine answers first: a [diff](/diff/) reads each entity in the state
 through its provider, as an apply would, so it also sees changes made to the
 real containers outside xcl. Like `status` it prints only its output, so it
 gives xcl no event handler:
@@ -1115,7 +1115,7 @@ func planCommand(stdout io.Writer, configDir, dockerPlugin, stateDir string) err
 
 `plan` hands the configuration's path to `Config.Diff`, which compares it with
 the state and returns the changes without creating, changing or saving
-anything. `diff.Render` turns them into text, a block per changed resource and
+anything. `diff.Render` turns them into text, a block per changed entity and
 a summary line. As in `inspect`, below, colour is decided for the writer
 itself, so `diff.Highlight` is added only when the output is a terminal:
 
@@ -1193,16 +1193,16 @@ A type with no subtype is looked up by its type alone:
 	}
 ```
 
-Each resource saved in state records what it links to in `Meta.Links`, every
-reference in its configuration. `status` nests each resource under the one it
+Each entity saved in state records what it links to in `Meta.Links`, every
+reference in its configuration. `status` nests each entity under the one it
 depends on that is furthest down the chain, so the template, which reads both
 the network and the container, sits under the container. The colours come
 from a renderer made for standard output, so they show only in a terminal.
 
-`inspect` reads the state the same way, finds the resource by its address and
+`inspect` reads the state the same way, finds the entity by its address and
 turns it back into configuration text with `EncodeEntity`. It asks for the
 values the provider set, each marked, and for every reference as it was
-written, so the text shows how the resource is wired to the others. In a
+written, so the text shows how the entity is wired to the others. In a
 terminal it is syntax highlighted through `xcl.Highlight`:
 
 ```go title="example/plugin/inspect.go"
@@ -1387,7 +1387,7 @@ provides:
 
 Then the lifecycle runs. Here are the init template, the container and the
 welcome template, trimmed from the full run. After each `create success` the
-receiver prints the resource as configuration text, with the values the
+receiver prints the entity as configuration text, with the values the
 provider set marked:
 
 ```text
@@ -1482,7 +1482,7 @@ process boundary, also arrive after its `load success` line rather than
 between its `load start` and `load success`.
 
 `apply` and `destroy` print nothing to standard output. `status`, a separate
-run, prints the tree from the saved state alone, each resource under what it
+run, prints the tree from the saved state alone, each entity under what it
 depends on, with the computed values the Docker plugin set:
 
 ```text
@@ -1492,7 +1492,7 @@ depends on, with the computed values the Docker plugin set:
         └── ● template.welcome  ./build/rendered/welcome.txt
 ```
 
-In a terminal the dots are green for a resource that was created, red for one
+In a terminal the dots are green for an entity that was created, red for one
 that failed, and the Docker and template addresses are coloured by plugin.
 
 `xcl-docker inspect docker.container.web`, another run, prints the container
@@ -1570,11 +1570,11 @@ the Docker plugin reads again when it updates the container. The init
 template only reads the network's name, which does not change, so it is
 unchanged. Nothing was changed or saved by the plan.
 
-Applying `./config/alt-subnet` reads and decides every resource first, then
+Applying `./config/alt-subnet` reads and decides every entity first, then
 destroys the network, which force-disconnects the running container, creates
 the network on the new range, updates the container, which connects it again,
 and updates the template, in dependency order. Trimmed to the provider calls,
-without the resources printed after each `create success`:
+without the entities printed after each `create success`:
 
 ```text
 9:13AM INFO changed success source=core operation=changed phase=success resource=docker.network.app type=network.app file=config/alt-subnet/main.xcl duration=261.132µs
@@ -1593,9 +1593,9 @@ without the resources printed after each `create success`:
 9:13AM INFO apply success source=core operation=apply phase=success duration=196.256325ms
 ```
 
-A replacement is a `destroy` and a `create` for the same resource, there is
+A replacement is a `destroy` and a `create` for the same entity, there is
 no separate replace event. The destroy names `config/full/main.xcl`, the file the
-saved resource came from, and the create `config/alt-subnet/main.xcl`. The new
+saved entity came from, and the create `config/alt-subnet/main.xcl`. The new
 network has a new Docker ID and the new range, and the container is the same
 one, with the same Docker ID, now attached to it. `status` shows the new
 network:

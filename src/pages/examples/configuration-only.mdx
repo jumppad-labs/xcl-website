@@ -10,7 +10,7 @@ import Button from "../../components/Button.astro";
 
 <Hero
   heading="Example: configuration only"
-  sub="A Kubernetes-like configuration read into Go types and reported as ingress routes. Nested blocks, repeated blocks and resources linked to each other by reference, with no plugin and no provider."
+  sub="A Kubernetes-like configuration read into Go types and reported as ingress routes. Nested blocks, repeated blocks and entities linked to each other by reference, with no plugin and no provider."
 />
 
 <Prose>
@@ -149,7 +149,7 @@ type Rule struct {
 
 Three files in one directory make one configuration: variables, a map
 attribute, blocks nested inside blocks, blocks that repeat, and references
-between resources, including a reference into a repeated block by position.
+between entities, including a reference into a repeated block by position.
 
 ```hcl title="example/configonly/config/deployment.xcl"
 # The configuration only example: a small Kubernetes-like deployment, parsed
@@ -574,9 +574,9 @@ make run
 ```
 
 The events go to standard error, trimmed here to a few of each. Every step is
-logged at info, `core` is xcl itself, and each line names the resource and the
+logged at info, `core` is xcl itself, and each line names the entity and the
 file it came from. The level is read from `XCL_LOG_LEVEL` and defaults to
-info. Each created resource is shown as configuration text, with the secret's
+info. Each created entity is shown as configuration text, with the secret's
 data masked:
 
 ```text
@@ -626,7 +626,7 @@ api.example.com/ -> service.api:80 -> deployment.api container api port http (80
   the deployment's first container port, so changing the container port
   changes the service too. The environment variables come from the config
   map the same way.
-- **Resources are linked, not matched.** The service names the deployment by
+- **Entities are linked, not matched.** The service names the deployment by
   id and the ingress names the service by id. There is no selector to keep in
   sync by hand.
 - **References order the graph.** The ingress reads the service, which reads

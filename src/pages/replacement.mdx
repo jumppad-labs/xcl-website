@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/Shell.astro
 title: "Unchanged, update or replace - xcl"
-description: "A provider's Changed answers entity.NoChange, entity.Update or entity.Replace, and with Update is told which of its settings changed and which of its dependencies the same apply updates or replaces. How xcl decides every resource before acting, destroys replacements first, and shows it all in the plan."
+description: "A provider's Changed answers entity.NoChange, entity.Update or entity.Replace, and with Update is told which of its settings changed and which of its dependencies the same apply updates or replaces. How xcl decides every entity before acting, destroys replacements first, and shows it all in the plan."
 ---
 import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
@@ -10,12 +10,12 @@ import Button from "../components/Button.astro";
 
 <Hero
   heading="Unchanged, update or replace"
-  sub="A provider decides what applying new configuration needs for each of its resources: leave it alone, change it in place, or destroy it and create it again. It is told which of its settings and dependencies are changing, and xcl makes every decision before it changes anything."
+  sub="A provider decides what applying new configuration needs for each of its entities: leave it alone, change it in place, or destroy it and create it again. It is told which of its settings and dependencies are changing, and xcl makes every decision before it changes anything."
 />
 
 <Prose>
 
-Some changes can be made to a running resource and some cannot. A container's
+Some changes can be made to a running entity and some cannot. A container's
 image is fixed when Docker creates it, and a network cannot be moved to a new
 address range. A provider knows which is which, so the decision is its own:
 its `Changed` method answers one of three outcomes, and xcl does the rest.
@@ -30,13 +30,13 @@ Changed(ctx context.Context, old T, new T, changes []entity.PropertyChange, depe
 Update(ctx context.Context, resource T, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (T, error)
 ```
 
-`old` is the resource as saved by the last apply. `new` is the current
+`old` is the entity as saved by the last apply. `new` is the current
 configuration after it has been through `Read`, so it holds both configuration
-edits and drift observed in the real resource. `changes` lists the settings
+edits and drift observed in the real entity. `changes` lists the settings
 that differ from the last apply, covered
-[below](#what-a-resource-is-told-about-its-settings), and `dependencies` the
+[below](#what-an-entity-is-told-about-its-settings), and `dependencies` the
 dependencies that change with it, covered
-[below](#what-a-resource-is-told-about-its-dependencies). The answer is an
+[below](#what-an-entity-is-told-about-its-dependencies). The answer is an
 `entity.Change`:
 
 ```go title="entity/change.go"
@@ -52,15 +52,15 @@ const (
 
 | Answer | What the apply does |
 | --- | --- |
-| `entity.NoChange` | Leaves the resource alone. It is saved as `Read` returned it and keeps its status. |
+| `entity.NoChange` | Leaves the entity alone. It is saved as `Read` returned it and keeps its status. |
 | `entity.Update` | Calls the provider's `Update` with the new configuration, the settings that changed and the same dependency list. `Update` is only ever called for this answer. |
-| `entity.Replace` | Calls `Destroy` on the saved resource, then `Create` with the new configuration. |
+| `entity.Replace` | Calls `Destroy` on the saved entity, then `Create` with the new configuration. |
 
 An error from `Changed`, or from the `Read` before it, fails the whole apply or
 plan before anything is created, updated or destroyed.
 
-`Changed` is only asked about resources that are already in saved state. A
-resource that is new to the configuration is created without asking, and one
+`Changed` is only asked about entities that are already in saved state. An
+entity that is new to the configuration is created without asking, and one
 whose last apply failed (saved `failed` or `destroy_failed`) is replaced
 without asking, since there is nothing trustworthy to compare against.
 
@@ -73,7 +73,7 @@ differ and `entity.NoChange` when they do not:
 
 ```go title="provider.go"
 type MyProvider struct {
-	plugins.DefaultChanged[*MyResource]
+	plugins.DefaultChanged[*MyEntity]
 }
 ```
 
@@ -84,9 +84,9 @@ replaced dependency, defines its own `Changed` and defers to `DefaultChanged`
 for everything else, as the Docker example [below](#a-worked-example-docker)
 does.
 
-## What a resource is told about its dependencies
+## What an entity is told about its dependencies
 
-The `dependencies` argument lists the resources this one depends on that the
+The `dependencies` argument lists the entities this one depends on that the
 same apply will **update or replace**, each with its outcome, sorted by
 address:
 
@@ -99,36 +99,36 @@ type DependencyChange struct {
 }
 ```
 
-- **Direct dependencies only.** A dependency is a resource this one references
+- **Direct dependencies only.** A dependency is an entity this one references
   or names in `depends_on`. What that dependency depends on in turn is not
-  passed on: a resource hears about its own inputs, and each provider decides
+  passed on: an entity hears about its own inputs, and each provider decides
   for itself whether a change travels further.
 - **Update and replace only.** A dependency that is unchanged is not listed,
-  so an empty list means nothing this resource depends on is changing.
-- **Newly created dependencies are not listed.** Referencing a resource that
-  is being created already changes this resource's configuration and leaves
+  so an empty list means nothing this entity depends on is changing.
+- **Newly created dependencies are not listed.** Referencing an entity that
+  is being created already changes this entity's configuration and leaves
   the values it reads unknown, so it is planned as at least an update anyway.
 - **Look-through.** Outputs, variables, modules and registered
   configuration-only types have no provider, so they are looked through to
-  the provider-backed resources behind them. A module boundary or a variable
-  never hides a replaced resource: a resource inside a module is told about
-  the changing resources that the module block's `variables` reference.
+  the provider-backed entities behind them. A module boundary or a variable
+  never hides a replaced entity: an entity inside a module is told about
+  the changing entities that the module block's `variables` reference.
 
-xcl decides resources in dependency order, so every dependency's outcome is
-known by the time a resource is asked.
+xcl decides entities in dependency order, so every dependency's outcome is
+known by the time an entity is asked.
 
-When a resource's configuration reads a value that is only known after the
+When an entity's configuration reads a value that is only known after the
 apply, because the dependency that computes it is being created, updated or
 replaced, its provider is still asked. The saved value stands in for the
-unknown one, and the resource is planned as at least an update; the provider
+unknown one, and the entity is planned as at least an update; the provider
 can still answer replace.
 
 `Update` is given the same list, recorded while deciding, so a provider that
 answered update because of a dependency knows which one when it acts.
 
-## What a resource is told about its settings
+## What an entity is told about its settings
 
-The `changes` argument lists the settings of the resource that differ between
+The `changes` argument lists the settings of the entity that differ between
 the last apply and the configuration, one `entity.PropertyChange` each:
 
 ```go title="entity/property_change.go"
@@ -153,7 +153,7 @@ type PropertyChange struct {
 - **The plan's own list.** xcl works the list out with the same comparison of
   the saved copy against the configured one that the [plan](/diff/) shows, so
   a provider is told exactly the settings the plan lists, at the same paths.
-  It describes the configuration: drift that `Read` finds in the real resource
+  It describes the configuration: drift that `Read` finds in the real entity
   is not in it, it is in the difference between `old` and `new`.
 - **Not yet known while deciding.** When `Changed` is called, a new value that
   is only known once the apply runs, such as a computed value of a dependency
@@ -179,7 +179,7 @@ type PropertyChange struct {
   one change holding the whole value, with a nil `Before` when it was added
   and a nil `After` when it was removed.
 
-An empty list means none of the resource's own settings changed.
+An empty list means none of the entity's own settings changed.
 
 A `Path` is a list of steps, built with `Attribute`, `Index` and `Key`. Match a
 change with `At`, for a change exactly at a path, or `Within`, for a change at
@@ -202,34 +202,34 @@ so `change.Within(entity.Path{}.Attribute("network"))` matches `network`,
 `network[0]`, `network[0].name` and `network[1].aliases[0]` alike.
 
 Whatever `Update`, `Create` or `Read` returns is authoritative for the
-resource's computed values. xcl clears them before it decodes the result, so a
+entity's computed values. xcl clears them before it decodes the result, so a
 computed value the provider leaves out, such as an `omitempty` address it
 cleared, is cleared rather than kept from the last apply.
 
 ## Decide, then act
 
 Both `Apply` and `Diff` (the plan) run the same decide pass first. Every
-resource is read and asked `Changed` before any provider creates, updates or
+entity is read and asked `Changed` before any provider creates, updates or
 destroys anything.
 
-1. **Decide.** In dependency order, each resource is decided create, unchanged,
+1. **Decide.** In dependency order, each entity is decided create, unchanged,
    update or replace. A failed `Read` or `Changed` stops here: nothing has
    changed, nothing is marked failed and saved state is untouched. Fix the
    cause and run again.
-2. **Destroy.** Every replaced and removed resource is destroyed, dependents
-   first, with state saved after each. A failed destroy marks the resource
+2. **Destroy.** Every replaced and removed entity is destroyed, dependents
+   first, with state saved after each. A failed destroy marks the entity
    `destroy_failed` and stops the apply.
 3. **Create and update.** In dependency order, with real values: new and
-   replaced resources are created, updated resources are updated, unchanged
-   resources are kept. A failed create saves the resource `failed`.
+   replaced entities are created, updated entities are updated, unchanged
+   entities are kept. A failed create saves the entity `failed`.
 
-A failed replacement is not lost. The resource is saved `failed` or
+A failed replacement is not lost. The entity is saved `failed` or
 `destroy_failed`, and the next plan or apply replaces it again without asking
 its provider.
 
 In the [event stream](/events/) every read and changed event comes before the
 first destroy, create or update. A replacement has no operation of its own:
-it shows as a destroy followed by a create of the same resource.
+it shows as a destroy followed by a create of the same entity.
 
 ## A worked example: Docker
 
@@ -447,7 +447,7 @@ after the main configuration:
 
 ## How the plan shows it
 
-The plan says which resources are replaced or updated and why, in a comment
+The plan says which entities are replaced or updated and why, in a comment
 above each header. This is the real plan for the change above:
 
 ```text
@@ -481,8 +481,8 @@ script's destination replaces `template.init`, and the container that mounts
 it answers replace,
 `# docker.container.web will be replaced because template.init is replaced`.
 
-In a diff, a replaced resource's `Reason` and `ReplacedDeps`, and an updated
-resource's `Dependencies`, carry the same information as data. A plan after
+In a diff, a replaced entity's `Reason` and `ReplacedDeps`, and an updated
+entity's `Dependencies`, carry the same information as data. A plan after
 the apply shows `Diff: no changes, 4 unchanged.` See [Diffs](/diff/) for
 reading a plan from Go and rendering it.
 
@@ -568,7 +568,7 @@ value an in-process provider receives.
 
 Plugins built against an earlier protocol must be rebuilt. One built before
 `Changed` answered an outcome rather than a yes or no reads as no change, so
-its resources would never be updated, and one built before the changes were
+its entities would never be updated, and one built before the changes were
 added is never told them. A provider that only embeds `DefaultChanged` needs
 its `Update` given the new parameters and a rebuild.
 

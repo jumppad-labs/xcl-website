@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/Shell.astro
 title: "Plugin logging and loading - xcl"
-description: "How a provider logs with plugins.Logger(ctx), how xcl adds the resource and step for it, and when registered plugins are loaded."
+description: "How a provider logs with plugins.Logger(ctx), how xcl adds the entity and step for it, and when registered plugins are loaded."
 ---
 import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
@@ -10,7 +10,7 @@ import Button from "../components/Button.astro";
 
 <Hero
   heading="Plugin logging and loading"
-  sub="A provider logs a message and nothing else. xcl adds the plugin, the resource and the step, the same for in-process and external plugins, and loads plugins only when they are first needed."
+  sub="A provider logs a message and nothing else. xcl adds the plugin, the entity and the step, the same for in-process and external plugins, and loads plugins only when they are first needed."
 />
 
 <Prose>
@@ -48,7 +48,7 @@ func (p *networkProvider) Create(ctx context.Context, n *entities.Network) (*ent
 ```
 
 Keep no logger on the provider. Providers are called concurrently for
-different resources, and each call carries its own logger in its context.
+different entities, and each call carries its own logger in its context.
 Outside a provider call, `plugins.Logger(ctx)` returns a logger that emits
 nothing.
 
@@ -63,9 +63,9 @@ The same care applies to any value a provider logs. Logging a
 unwrapped with `Reveal()` is no longer protected and must never be logged.
 See [Sensitive values](/sensitive-values/).
 
-## The resource and step come for free
+## The entity and step come for free
 
-Before each call, xcl binds the context's logger to the resource being worked
+Before each call, xcl binds the context's logger to the entity being worked
 on, its type, the file it was declared in and the step, `create`, `read`,
 `changed`, `update` or `destroy`. It also names the plugin as the event's
 source: the Go type name of an in-process plugin, or the file name of an
@@ -91,7 +91,7 @@ or runs as a separate binary over gRPC. The network provider above is in the
 example's Docker plugin, an external plugin running in its own process.
 Inside an external plugin, `plugins.Logger(ctx)` sends each message back to
 the host, tagged with the call it belongs to, and the host gives it that
-call's resource, step and receiver, so it arrives exactly where an in-process
+call's entity, step and receiver, so it arrives exactly where an in-process
 message would.
 
 The example's template plugin, `TemplatePlugin`, is compiled into the
@@ -112,7 +112,7 @@ func (p *provider) Create(ctx context.Context, t *Template) (*Template, error) {
 }
 ```
 
-The two messages arrive alike, each with its call's resource, type, file and
+The two messages arrive alike, each with its call's entity, type, file and
 step, and only the `source` tells them apart: `docker-plugin`, the file name
 of the external binary, and `TemplatePlugin`, the Go type name of the
 in-process plugin:
@@ -133,7 +133,7 @@ external plugins.
 `Init` runs when the plugin loads, before any provider call, so it has no
 call context. The logger it receives is plugin scoped instead: its messages
 carry the plugin as their source and `load` as their operation, and no
-resource. Use it for messages written outside a call, and pass it on to
+entity. Use it for messages written outside a call, and pass it on to
 `RegisterResourceProvider`, which hands it to each provider's `Init`. For an
 in-process plugin, that copy adds a `provider` detail to what the provider
 logs, naming the block subtype, or the block type when it has no subtype, as
