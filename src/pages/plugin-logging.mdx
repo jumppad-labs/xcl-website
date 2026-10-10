@@ -28,29 +28,19 @@ A provider logs through `plugins.Logger(ctx)`, the logger in the context of
 the call it is handling. It has the familiar `Debug`, `Info`, `Warn` and
 `Error` methods, each taking a message and key/value details:
 
-```go title="example/plugin/plugins/docker/resources/network.go"
+```go title="example/plugin/plugins/docker/providers/network.go"
 // Create asks Docker for a labelled bridge network named after the block, and
 // records the ID Docker gives it
-func (p *networkProvider) Create(ctx context.Context, n *Network) (*Network, error) {
-	options := network.CreateOptions{
-		Driver:     "bridge",
-		Attachable: true,
-		Labels:     labels(n.Meta),
-	}
-
-	if n.Subnet != "" {
-		options.IPAM = &network.IPAM{
-			Driver: "default",
-			Config: []network.IPAMConfig{{Subnet: n.Subnet}},
-		}
-	}
-
-	resp, err := p.client.NetworkCreate(ctx, n.Meta.Name, options)
+func (p *networkProvider) Create(ctx context.Context, n *entities.Network) (*entities.Network, error) {
+	id, err := p.tasks.CreateNetwork(ctx, n.Meta.Name, containers.NetworkSpec{
+		Subnet: n.Subnet,
+		Labels: labels(n.Meta),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create network %s: %w", n.Meta.Name, err)
 	}
 
-	n.DockerID = resp.ID
+	n.DockerID = id
 	plugins.Logger(ctx).Info("created network", "name", n.Meta.Name, "id", n.DockerID)
 
 	return n, nil
@@ -63,9 +53,9 @@ Outside a provider call, `plugins.Logger(ctx)` returns a logger that emits
 nothing.
 
 What a provider does keep is what every call shares. The Docker plugin builds
-one Docker client in `Init` and gives it to its providers, so
-`networkProvider` holds that `client.Docker` and takes only the logger from the
-call's context. The message it logs is its own: the network's name and the
+one Docker client in `Init`, wraps it once in its container task layer and
+gives that to its providers, so `networkProvider` holds that
+`containers.Tasks` and takes only the logger from the call's context. The message it logs is its own: the network's name and the
 ID Docker gave it.
 
 The same care applies to any value a provider logs. Logging a
