@@ -1,0 +1,358 @@
+---
+layout: ../../layouts/Shell.astro
+title: "Functions - xcl"
+description: "The 57 built-in functions configuration can call, grouped by what they work on, and how an application or a plugin offers functions of its own under a bare name, with the clash rules."
+---
+import Hero from "../../components/sections/Hero.astro";
+import Prose from "../../components/sections/Prose.astro";
+import CodeTabs from "../../components/CodeTabs.astro";
+
+<Hero
+  heading="Functions"
+  sub="A function call is an expression like any other, evaluated while the configuration is read. The built-ins cover strings, numbers, collections, encoding, dates and files; an application and a plugin add their own."
+/>
+
+<Prose>
+
+This page covers when a function call is evaluated, every built-in function
+with one example each, how an application registers a function of its own,
+how a plugin offers functions, and what happens when two providers offer the
+same name.
+
+## When functions run
+
+```hcl title="main.xcl"
+database "postgres" "main" {
+  location = "db.internal"
+  name     = lower(variable.name)
+  password = env("DB_PASSWORD")
+}
+```
+
+A function call is evaluated while the configuration is read, before any
+provider runs, so an entity's values reach a plugin already computed: the
+provider for `database.postgres.main` sees the lowercased name and the
+password, never the calls. A call may take references, variables and other
+calls as arguments, and a result computed from a sensitive argument stays
+sensitive; see [Sensitive values](/sensitive-values/).
+
+## Built-in functions
+
+Every example below is an `output` block, so it runs in any configuration
+without a registered type. The result of each call is shown as a comment.
+
+### Strings
+
+- `chomp(str)` — removes newline characters from the end of the string.
+- `format(spec, args...)` — builds a string from a `printf`-style spec and its arguments.
+- `formatlist(spec, lists...)` — applies `format` once per element, producing a list of strings.
+- `indent(spaces, str)` — adds the given number of spaces after each newline in the string.
+- `join(separator, list)` — joins the elements of a list of strings with the separator.
+- `lower(str)` — lowercases every letter.
+- `regex(pattern, str)` — returns the first match of the pattern; with groups, a list of them, with named groups, a map. No match is an error.
+- `regexall(pattern, str)` — returns every match of the pattern as a list, empty when there is none.
+- `split(separator, str)` — splits the string at every separator into a list of strings.
+- `strrev(str)` — reverses the characters of the string.
+- `substr(str, offset, length)` — returns up to `length` characters from `offset`.
+- `title(str)` — uppercases the first letter of each word.
+- `trim(str)` — removes whitespace from both ends of the string.
+- `trimprefix(str, prefix)` — removes the prefix when the string starts with it.
+- `trimspace(str)` — removes whitespace from both ends of the string.
+- `trimsuffix(str, suffix)` — removes the suffix when the string ends with it.
+- `upper(str)` — uppercases every letter.
+
+```hcl title="strings.xcl"
+output "strings" {
+  value = {
+    chomp      = chomp("web\n")                            # "web"
+    format     = format("%s-%d", "web", 3)                 # "web-3"
+    formatlist = formatlist("%s.internal", ["web", "db"])  # ["web.internal", "db.internal"]
+    indent     = indent(2, "a\nb")                         # "a\n  b"
+    join       = join("-", ["web", "eu"])                  # "web-eu"
+    lower      = lower("WEB")                              # "web"
+    regex      = regex("[0-9]+", "web-42")                 # "42"
+    regexall   = regexall("[0-9]+", "a1b22")               # ["1", "22"]
+    split      = split(",", "web,db")                      # ["web", "db"]
+    strrev     = strrev("abc")                             # "cba"
+    substr     = substr("web-server", 0, 3)                # "web"
+    title      = title("web server")                       # "Web Server"
+    trim       = trim("  web  ")                           # "web"
+    trimprefix = trimprefix("xcl-plugin-docker", "xcl-plugin-")  # "docker"
+    trimspace  = trimspace("  web  ")                      # "web"
+    trimsuffix = trimsuffix("main.xcl", ".xcl")            # "main"
+    upper      = upper("web")                              # "WEB"
+  }
+}
+```
+
+### Numbers
+
+- `abs(num)` — the number without its sign.
+- `ceil(num)` — the smallest whole number that is not less than the number.
+- `floor(num)` — the largest whole number that is not greater than the number.
+- `log(num, base)` — the logarithm of the number in the given base.
+- `max(nums...)` — the largest of the numbers.
+- `min(nums...)` — the smallest of the numbers.
+- `parseint(str, base)` — parses the string as a whole number in the given base, 2 to 62.
+- `pow(num, power)` — the number raised to the power.
+- `signum(num)` — `-1`, `0` or `1` for a negative, zero or positive number.
+
+```hcl title="numbers.xcl"
+output "numbers" {
+  value = {
+    abs      = abs(-3)             # 3
+    ceil     = ceil(1.2)           # 2
+    floor    = floor(1.8)          # 1
+    log      = log(8, 2)           # 3
+    max      = max(1, 5, 3)        # 5
+    min      = min(1, 5, 3)        # 1
+    parseint = parseint("ff", 16)  # 255
+    pow      = pow(2, 10)          # 1024
+    signum   = signum(-5)          # -1
+  }
+}
+```
+
+### Collections
+
+- `chunklist(list, size)` — splits a list into lists of at most `size` elements.
+- `coalescelist(lists...)` — the first list that is not empty.
+- `compact(list)` — removes empty strings from a list of strings.
+- `concat(lists...)` — joins lists into one, keeping their order.
+- `contains(list, value)` — `true` when the value is an element of the list.
+- `distinct(list)` — removes duplicate elements, keeping the first of each.
+- `element(collection, key)` — the element of a list at an index, or of a map at a key.
+- `flatten(list)` — replaces nested lists with their elements, in order.
+- `keys(map)` — the keys of a map, sorted.
+- `len(value)` — the number of elements in a list or map, or characters in a string.
+- `merge(maps...)` — one map holding every entry of the given maps; a later map wins a repeated key.
+- `range(end)` — the whole numbers from `0` up to but not including `end`; `range(start, end, step)` takes a start and a step.
+- `reverse(list)` — the list in reverse order.
+- `setintersection(sets...)` — the elements present in every set.
+- `setproduct(sets...)` — every combination of one element from each set, as a list of lists.
+- `setsubtract(a, b)` — the elements of `a` that are not in `b`.
+- `setunion(sets...)` — the elements present in any set.
+- `slice(list, start, end)` — the elements from `start` up to but not including `end`.
+- `sort(list)` — a list of strings in lexical order.
+- `values(map)` — the values of a map, in key order.
+- `zipmap(keys, values)` — a map pairing each key with the value at the same position.
+
+`setintersection`, `setsubtract` and `setunion` return a set, not a list. A
+set decodes into a list field of a registered type and is accepted by `sort`,
+`join`, `len` and most other functions, but a set published as it is through
+an `output` is not yet supported: it reads back as the set's internal
+description rather than a list. The example sorts each one into a list.
+
+```hcl title="collections.xcl"
+output "collections" {
+  value = {
+    chunklist       = chunklist(["a", "b", "c"], 2)        # [["a", "b"], ["c"]]
+    coalescelist    = coalescelist([], ["a"])              # ["a"]
+    compact         = compact(["a", "", "b"])              # ["a", "b"]
+    concat          = concat(["a"], ["b"])                 # ["a", "b"]
+    contains        = contains(["a", "b"], "a")            # true
+    distinct        = distinct(["a", "a", "b"])            # ["a", "b"]
+    element         = element(["a", "b", "c"], 1)          # "b"
+    flatten         = flatten([["a"], ["b", "c"]])         # ["a", "b", "c"]
+    keys            = keys({ a = 1, b = 2 })               # ["a", "b"]
+    len             = len(["a", "b"])                      # 2
+    merge           = merge({ a = 1 }, { b = 2 })          # { a = 1, b = 2 }
+    range           = range(3)                             # [0, 1, 2]
+    reverse         = reverse(["a", "b", "c"])             # ["c", "b", "a"]
+    setintersection = sort(setintersection(["a", "b"], ["b", "c"]))  # ["b"]
+    setproduct      = setproduct(["a", "b"], ["1"])        # [["a", "1"], ["b", "1"]]
+    setsubtract     = sort(setsubtract(["a", "b"], ["b"])) # ["a"]
+    setunion        = sort(setunion(["a"], ["b"]))         # ["a", "b"]
+    slice           = slice(["a", "b", "c"], 1, 3)         # ["b", "c"]
+    sort            = sort(["b", "a"])                     # ["a", "b"]
+    values          = values({ a = 1, b = 2 })             # [1, 2]
+    zipmap          = zipmap(["a", "b"], [1, 2])           # { a = 1, b = 2 }
+  }
+}
+```
+
+### Encoding
+
+- `csvdecode(str)` — parses CSV text into a list of objects, one per row, with the header row naming the attributes.
+- `jsondecode(str)` — parses JSON text into a value.
+- `jsonencode(value)` — writes a value as JSON text.
+
+```hcl title="encoding.xcl"
+output "encoding" {
+  value = {
+    csvdecode  = csvdecode("name,port\nweb,80\n")  # [{ name = "web", port = "80" }]
+    jsondecode = jsondecode("{\"port\": 80}")      # { port = 80 }
+    jsonencode = jsonencode({ port = 80 })         # "{\"port\":80}"
+  }
+}
+```
+
+### Dates
+
+- `formatdate(spec, timestamp)` — writes an RFC 3339 timestamp in the given layout, built from `YYYY`, `MM`, `DD`, `hh`, `mm`, `ss` and the other mnemonics the layout accepts.
+- `timeadd(timestamp, duration)` — adds a duration such as `"1h"`, `"30m"` or `"-24h"` to an RFC 3339 timestamp.
+
+```hcl title="dates.xcl"
+output "dates" {
+  value = {
+    formatdate = formatdate("YYYY-MM-DD", "2026-10-11T09:30:00Z")  # "2026-10-11"
+    timeadd    = timeadd("2026-10-11T09:30:00Z", "1h")             # "2026-10-11T10:30:00Z"
+  }
+}
+```
+
+### Files and environment
+
+- `dir()` — the absolute path of the directory holding the file being read.
+- `env(name)` — the value of an environment variable, empty when it is not set.
+- `file(path)` — the contents of a file; a relative path is taken from the file being read.
+- `home()` — the current user's home directory.
+- `template_file(path, vars)` — renders a Handlebars-style `{{ }}` template file with the given variables. Inside the template, `{{ quote name }}` wraps a value in double quotes and `{{ trim name }}` strips whitespace from it.
+
+```hcl title="files.xcl"
+# motd.txt holds `welcome` and motd.tmpl holds `hello {{ name }}`, next to this file
+output "files" {
+  value = {
+    dir           = dir()                                        # "/home/nic/project/config"
+    env           = env("HOME")                                  # "/home/nic"
+    file          = file("./motd.txt")                           # "welcome"
+    home          = home()                                       # "/home/nic"
+    template_file = template_file("./motd.tmpl", { name = "web" })  # "hello web"
+  }
+}
+```
+
+## Functions from your application
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+  slug  = slugify("My App")  # "my-app"
+}
+```
+
+An application offers a function of its own by registering a plain function
+on its local registry, beside its types. Configuration then calls it by the
+registered name exactly as it calls a built-in, and the entity holds the
+result:
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="main.go"
+local := registry.NewLocal()
+local.RegisterType(&App{}, "app")
+local.RegisterFunction("slugify", func(title string) (string, error) {
+	return strings.ToLower(strings.ReplaceAll(title, " ", "-")), nil
+})
+
+c, err := xcl.NewConfig(xcl.WithRegistry(local))
+if err != nil {
+	return err
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+def slugify(title: str) -> str:
+    return title.lower().replace(" ", "-")
+
+
+local = xcl.LocalRegistry()
+local.register_type(App)
+local.register_function(slugify)
+
+with xcl.Config(registries=[local]) as cfg:
+    ...
+```
+
+  </div>
+</CodeTabs>
+
+In Go the function takes parameters of `string`, `bool` and number types, or
+slices and string-keyed maps of those, and returns a result of such a type
+and a trailing `error`. A returned error fails the configuration with its
+message. A variadic function, one without the `error` result, or a parameter
+of another type is an `*xcl.InvalidFunctionError` from `xcl.NewConfig`.
+
+In Python the annotations give the signature: `str`, `bool`, `int` and
+`float`, and lists and dicts of those, for the parameters and the result.
+`register_function` takes the function's own name unless `name=` is given.
+With `xcl.aio.Config` the function may be `async def`.
+
+## Functions from plugins
+
+```hcl title="main.xcl"
+# docker_ip is an example of a function a plugin might offer; it is not one of the built-ins
+service "api" {
+  address = docker_ip("web")
+}
+```
+
+A plugin offers functions through its provider's `Functions()` method, and
+configuration calls them by their bare name exactly like a built-in. The call
+runs inside the plugin: the arguments are sent to it and the result comes
+back, so the entity only ever holds the result. A Python application gets a
+plugin's functions from the same Go plugin binary it registers with
+`register_external_plugin`; there is nothing to declare on the Python side.
+To write a plugin that offers functions, start from the
+[plugin template](/plugin-template/).
+
+## Name clashes
+
+Function names are bare, with no namespace to tell two apart and no
+precedence between providers, so a name offered twice is an error. Where it is
+reported depends on when it can first be seen:
+
+- **Two application functions**, in one registry or across two, or an
+  application function named like a built-in, are reported when the
+  configuration is created: `xcl.NewConfig` returns a
+  `*xcl.FunctionNameClashError`, and `xcl.Config(...)` raises
+  `xcl.FunctionNameClashError`.
+- **A plugin** that offers a name an application function, a built-in or
+  another plugin already has is reported when plugins load, at the start of
+  the first operation, as the same error.
+
+The error names the function, the provider and registry that offered it a
+second time, and what already provides it: `builtin`, a plugin, or an
+application function and its registry.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="main.go"
+c, err := xcl.NewConfig(xcl.WithRegistry(local), xcl.WithRegistry(shared))
+
+var clash *xcl.FunctionNameClashError
+if errors.As(err, &clash) {
+	fmt.Printf("%s: %s (%s) and %s (%s)\n",
+		clash.Name, clash.Existing, clash.ExistingRegistry, clash.Provider, clash.Registry)
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+try:
+    with xcl.Config(registries=[local, shared]) as cfg:
+        ...
+except xcl.FunctionNameClashError as e:
+    print(e)
+```
+
+  </div>
+</CodeTabs>
+
+The same `errors.As` and `except` apply to the error from the first
+`Validate`, `Apply`, `Destroy`, `Diff` or `Load` when the clash involves a
+plugin.
+
+## Next
+
+Back to the [language reference](/language/), or on to
+[Registries](/registries/) for where types and functions are registered.
+
+</Prose>

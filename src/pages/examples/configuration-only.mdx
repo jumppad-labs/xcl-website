@@ -7,6 +7,7 @@ import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
 import CtaBanner from "../../components/sections/CtaBanner.astro";
 import Button from "../../components/Button.astro";
+import CodeTabs from "../../components/CodeTabs.astro";
 
 <Hero
   heading="Example: configuration only"
@@ -35,7 +36,9 @@ deployment and prints, for every ingress path, where the traffic ends up. The
 source is in
 [`example/configonly`](https://github.com/jumppad-labs/xcl/tree/main/example/configonly),
 a Go module of its own that can be copied out of the repository and built
-against a published xcl.
+against a published xcl. The Python tabs show the same program written against
+the Python package; they are not in the repository and are shown for
+comparison.
 
 ## The Go types
 
@@ -45,6 +48,9 @@ Anything nested inside a block is a plain struct: a block that appears once
 is a pointer, a block that repeats is a slice. The secret's data is a
 [sensitive value](/sensitive-values/), so it is masked in output and events,
 and would be encrypted in state by a program that kept any.
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="example/configonly/resources/resources.go"
 // ConfigMap defines the block type `config_map`, a bag of values the
@@ -106,11 +112,144 @@ type Container struct {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="example/configonly/resources/resources.py"
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import xcl
+
+
+# ConfigMap defines the block type `config_map`, a bag of values the
+# deployment reads. A map attribute holds values whose names are not known
+# ahead of time, and a single value can be read from it with
+# `config_map.api.data.db_host`.
+@xcl.entity("config_map")
+@dataclass
+class ConfigMap(xcl.Resource):
+    data: dict[str, str]
+
+
+# Secret defines the block type `secret`, values that must not be seen. Data
+# is an xcl.Sensitive, so it is masked in output and events and encrypted in
+# state when the state has a key. A secret read back through a lookup holds
+# no value at all: str() of it is (sensitive) and reveal() returns None.
+#
+# As in Kubernetes, nothing else holds a secret's values: a container reads
+# one through a secret_key_ref naming the secret and the key, which are plain
+# strings, so the deployment never becomes sensitive itself.
+@xcl.entity("secret")
+@dataclass
+class Secret(xcl.Resource):
+    data: xcl.Sensitive[dict[str, str]]
+
+
+# Container is the nested `container` block of a deployment. It is not an
+# entity of its own, so it does not subclass xcl.Resource and can not be
+# referenced by its own id, its fields are reached through the deployment
+# that holds it, i.e.
+# `deployment.api.container[0].port[0].container_port`.
+#
+# The nested classes are declared before the deployment that holds them:
+# @xcl.entity reads a class's annotations when it is applied, so a name it
+# uses must already exist.
+@dataclass
+class Container:
+    name: str
+    image: str
+
+    port: list[Port] = xcl.field(default_factory=list)
+    env: list[EnvVar] = xcl.field(default_factory=list)
+
+    # resources appears at most once, so it is optional and is None when the
+    # container does not set it
+    resources: ResourceRequirements | None = None
+
+    volume_mount: list[VolumeMount] = xcl.field(default_factory=list)
+
+
+@dataclass
+class Port:
+    name: str
+    container_port: int
+
+
+@dataclass
+class EnvVar:
+    name: str
+    value: str | None = None
+
+    # value_from is set in place of value when the value comes from a secret
+    value_from: EnvVarSource | None = None
+
+
+@dataclass
+class EnvVarSource:
+    secret_key_ref: SecretKeySelector | None = None
+
+
+@dataclass
+class SecretKeySelector:
+    name: str
+    key: str
+
+
+@dataclass
+class ResourceRequirements:
+    limits: ResourceQuantities | None = None
+    requests: ResourceQuantities | None = None
+
+
+@dataclass
+class ResourceQuantities:
+    cpu: str | None = None
+    memory: str | None = None
+
+
+@dataclass
+class VolumeMount:
+    name: str
+    path: str
+
+
+@dataclass
+class Volume:
+    name: str
+    config_map: str
+
+
+# Deployment defines the block type `deployment`. It holds repeated container
+# blocks, each of which nests further blocks of its own. The attribute name
+# is the block name used in configuration, so a repeated `container` block
+# is the `container` list.
+@xcl.entity("deployment")
+@dataclass
+class Deployment(xcl.Resource):
+    replicas: int | None = None
+
+    # container is a repeated block, one entry per container block in the
+    # configuration. A repeated block is a list, a block that appears once is
+    # an optional field.
+    container: list[Container] = xcl.field(default_factory=list)
+
+    # volume blocks are mounted by the containers above through their name
+    volume: list[Volume] = xcl.field(default_factory=list)
+```
+
+  </div>
+</CodeTabs>
+
 The `service` type shows why this is more than a manifest. Kubernetes matches
 a service to its pods with a label selector, because a manifest has no way to
 point at another object. Configuration parsed by xcl does, so the service
 names the deployment by its id and reads the port out of it, and the two can
 not drift apart.
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="example/configonly/resources/resources.go"
 // Service defines the block type `service`, it routes traffic to the
@@ -144,6 +283,45 @@ type Rule struct {
 	Port    int    `xcl:"port" json:"port"`
 }
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="example/configonly/resources/resources.py"
+# Service defines the block type `service`, it routes traffic to the
+# containers of a deployment.
+#
+# Kubernetes matches a service to its pods with a label selector because a
+# manifest has no way to point at another object. Configuration parsed by xcl
+# does, so the service names the deployment by its id and reads the port out
+# of it, and the two can not drift apart.
+@xcl.entity("service")
+@dataclass
+class Service(xcl.Resource):
+    deployment: str
+    port: int
+    target_port: int
+
+
+# Rule is a nested `rule` block of an ingress, sending one path to one
+# service, named by its id. As above, it is declared before the ingress.
+@dataclass
+class Rule:
+    path: str
+    service: str
+    port: int
+
+
+# Ingress defines the block type `ingress`, it routes a host to a service
+@xcl.entity("ingress")
+@dataclass
+class Ingress(xcl.Resource):
+    host: str
+    rule: list[Rule] = xcl.field(default_factory=list)
+```
+
+  </div>
+</CodeTabs>
 
 ## The configuration
 
@@ -311,6 +489,9 @@ every block of its type, in the order the blocks were written, so the configurat
 needs. The struct holds only what the program reads; reading a new block type
 is one new field, with no lookup code.
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="example/configonly/main.go"
 // appConfig is the application's view of the configuration, filled by one
 // Decode call. A slice field receives every block of its registered type, in
@@ -358,11 +539,70 @@ func loadConfig(dir string, options ...xcl.ConfigOption) (*appConfig, error) {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+`Decode` has no Python form, so the Python program fills its own dataclass with one `all` call per block type it reads.
+
+```python title="example/configonly/main.py"
+import sys
+from dataclasses import dataclass
+
+import xcl
+
+import prettylog
+from resources import ConfigMap, Deployment, Ingress, Secret, Service
+
+
+# AppConfig is the application's view of the configuration. A list field
+# receives every block of its type, in the order the blocks were written, so
+# the configuration can declare as many of each as it needs. It holds only
+# what the program reads, reading a new block type needs only a new field.
+@dataclass
+class AppConfig:
+    deployments: list[Deployment]
+    services: list[Service]
+    ingresses: list[Ingress]
+
+
+# load_config declares the example's block types, applies the configuration in
+# path with the caller's options, and gathers it into an AppConfig.
+def load_config(path: str, **options) -> AppConfig:
+    # Declare each class on a local registry; the block type name used in
+    # configuration comes from its @xcl.entity decorator. A declared type
+    # needs nothing else: no plugin, no provider, no schema to write by hand.
+    # Every type the configuration declares must be declared here, even the
+    # ones the program does not read.
+    local = xcl.LocalRegistry()
+    local.register_type(ConfigMap)
+    local.register_type(Secret)
+    local.register_type(Deployment)
+    local.register_type(Service)
+    local.register_type(Ingress)
+
+    with xcl.Config(registries=[local], **options) as cfg:
+        cfg.apply(path)
+
+        # gather the configuration into the application's own dataclass, one
+        # lookup per block type the program reads
+        return AppConfig(
+            deployments=cfg.all(Deployment),
+            services=cfg.all(Service),
+            ingresses=cfg.all(Ingress),
+        )
+```
+
+  </div>
+</CodeTabs>
+
 `loadConfig` takes its options from the caller. `run` sends xcl's
 [events](/events/) to the example's pretty terminal receiver, and passes no
 state option, so nothing is written to disk. A test passes no options at all
 and loads the configuration the same way. With the routes worked out, `run`
 prints one line per route:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="example/configonly/main.go"
 // run loads the configuration in dir, works out its ingress routes and prints
@@ -394,6 +634,31 @@ func run(dir string) error {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="example/configonly/main.py"
+# run loads the configuration in path, works out its ingress routes and prints
+# one line per route. An error is raised as an exception rather than returned.
+def run(path: str) -> None:
+    cfg = load_config(
+        path,
+        # Every event xcl produces goes to the pretty receiver on stderr, so
+        # stdout holds only the routes
+        on_event=prettylog.handler(sys.stderr, prettylog.level_from_env()),
+        # events carry nothing by default, this asks for each entity as it
+        # is processed, which is what the receiver turns back into
+        # configuration text. Sensitive fields are redacted in events.
+        event_data="processed",
+    )
+
+    for route in ingress_routes(cfg):
+        print(route)
+```
+
+  </div>
+</CodeTabs>
+
 xcl writes nothing unless a receiver is set. The receiver needs nothing from
 the program but event data at `xcl.EventDataProcessed`: each event returns the
 entity it carries, typed by the Config that delivered it.
@@ -401,6 +666,9 @@ entity it carries, typed by the Config that delivered it.
 `ingressRoutes` is the program's business logic, plain Go over the decoded
 types with no xcl calls. Because the configuration links the blocks by id, each
 hop is a lookup:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="example/configonly/routes.go"
 // ingressRoutes works out a Route for every rule of every ingress, in the
@@ -475,6 +743,76 @@ func findContainerPort(deployment *resources.Deployment, containerPort int) (con
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="example/configonly/routes.py"
+# ingress_routes works out a Route for every rule of every ingress, in the
+# order they are declared.
+#
+# The configuration links the blocks by id: a rule names its service, and a
+# service names its deployment, so each hop is a lookup rather than a match on
+# labels as Kubernetes would do. The last hop is the service's target port,
+# which is found on the first container port, in declaration order, that
+# listens on it.
+#
+# A rule whose service, deployment or target port can not be found raises a
+# ValueError naming the ingress and path, a route is never silently left out.
+def ingress_routes(cfg: AppConfig) -> list[Route]:
+    services = {service.meta.id: service for service in cfg.services}
+    deployments = {deployment.meta.id: deployment for deployment in cfg.deployments}
+
+    routes: list[Route] = []
+
+    for ingress in cfg.ingresses:
+        for rule in ingress.rule:
+            service = services.get(rule.service)
+            if service is None:
+                raise ValueError(f'ingress {ingress.meta.id} path {rule.path}: service "{rule.service}" not found')
+
+            deployment = deployments.get(service.deployment)
+            if deployment is None:
+                raise ValueError(
+                    f'ingress {ingress.meta.id} path {rule.path}: deployment "{service.deployment}" of service {service.meta.id} not found'
+                )
+
+            found = find_container_port(deployment, service.target_port)
+            if found is None:
+                raise ValueError(
+                    f"ingress {ingress.meta.id} path {rule.path}: no container in {deployment.meta.id} exposes port {service.target_port}"
+                )
+
+            container, port = found
+            routes.append(
+                Route(
+                    host=ingress.host,
+                    path=rule.path,
+                    service=service.meta.id,
+                    service_port=rule.port,
+                    deployment=deployment.meta.id,
+                    container=container.name,
+                    port_name=port.name,
+                    port=port.container_port,
+                )
+            )
+
+    return routes
+
+
+# find_container_port returns the first container of deployment, and its port,
+# that listens on container_port, or None when no container does.
+def find_container_port(deployment: Deployment, container_port: int) -> tuple[Container, Port] | None:
+    for container in deployment.container:
+        for port in container.port:
+            if port.container_port == container_port:
+                return container, port
+
+    return None
+```
+
+  </div>
+</CodeTabs>
+
 ## Testing it
 
 The route logic is what an application author would test, and it is tested
@@ -515,6 +853,9 @@ ingress "shop" {
 }
 ```
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="example/configonly/routes_test.go"
 func TestIngressRoutesReportsEveryIngressPath(t *testing.T) {
 	cfg := loadTestConfig(t, "routes")
@@ -547,9 +888,48 @@ func TestIngressRoutesReportsEveryIngressPath(t *testing.T) {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="example/configonly/test_routes.py"
+def test_ingress_routes_reports_every_ingress_path():
+    cfg = load_config("testdata/routes")
+
+    routes = ingress_routes(cfg)
+
+    assert routes == [
+        Route(
+            host="shop.test",
+            path="/",
+            service="service.web",
+            service_port=80,
+            deployment="deployment.web",
+            container="web",
+            port_name="http",
+            port=3000,
+        ),
+        Route(
+            host="shop.test",
+            path="/api",
+            service="service.api",
+            service_port=9090,
+            deployment="deployment.api",
+            container="api",
+            port_name="grpc",
+            port=7000,
+        ),
+    ]
+```
+
+  </div>
+</CodeTabs>
+
 Each way a link can fail to resolve, an unknown service, an unknown deployment
 or a target port no container exposes, has a small configuration and a test of
 its own:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="example/configonly/routes_test.go"
 func TestIngressRoutesFailsForUnknownService(t *testing.T) {
@@ -561,6 +941,22 @@ func TestIngressRoutesFailsForUnknownService(t *testing.T) {
 	require.ErrorContains(t, err, `service "service.missing" not found`)
 }
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="example/configonly/test_routes.py"
+def test_ingress_routes_fails_for_unknown_service():
+    cfg = load_config("testdata/unknown_service")
+
+    with pytest.raises(ValueError, match="ingress ingress.shop path /") as raised:
+        ingress_routes(cfg)
+
+    assert 'service "service.missing" not found' in str(raised.value)
+```
+
+  </div>
+</CodeTabs>
 
 A smoke test builds the program and runs it against `./config`, checking it
 prints the default route.

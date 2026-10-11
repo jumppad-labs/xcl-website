@@ -1,0 +1,73 @@
+---
+layout: ../../layouts/Shell.astro
+title: "Language reference - xcl"
+description: "The XCL language: the files xcl reads, and the reference pages for entities, attributes and blocks, references, expressions, variables and outputs, modules and functions."
+---
+import Hero from "../../components/sections/Hero.astro";
+import Prose from "../../components/sections/Prose.astro";
+
+<Hero
+  heading="Language reference"
+  sub="What an XCL configuration is made of: the files xcl reads, and a page for each part of the language."
+/>
+
+<Prose>
+
+XCL is its own language, built on the readability of HCL. A configuration
+declares entities as blocks, and a block's attributes can refer to other
+entities. xcl works out the order from those references, processes each
+entity after the ones it refers to, and either runs it through a plugin's
+provider or hands it to the application that read the configuration.
+
+```hcl title="main.xcl"
+database "postgres" "main" {
+  location = "db.local"
+}
+
+app "web" {
+  image = "nginx:1.27"
+  host  = database.postgres.main.location
+}
+```
+
+## Files
+
+Configuration lives in `.xcl` files. An operation such as `Validate` or
+`Apply` is given one or more paths: a file path must end in `.xcl` (a file
+with another extension is read as empty), and for a directory every `.xcl`
+file in it is read. A directory is not read
+recursively; its subdirectories are left alone unless a module brings one in.
+
+A `.vars` file found beside the `.xcl` files, in the directory of each path
+given to the operation, gives variables their values. It holds attributes
+only, one per variable:
+
+```hcl title="main.vars"
+region   = "eu"
+replicas = 3
+```
+
+See [Variables and outputs](/language/variables-and-outputs/) for how a
+value is chosen when a variable is set in more than one place.
+
+A `module` block brings in another directory of `.xcl` files, with its own
+variables and outputs; see [Modules](/language/modules/).
+
+## The reference
+
+- [Entities](/language/entities/): blocks, labels, addresses, the fields every entity has, and where entity types come from.
+- [Attributes and blocks](/language/attributes-and-blocks/): every shape an entity type can declare, in configuration and in Go or Python.
+- [References and processing order](/language/references/): referring to other entities, `depends_on`, and the order entities are processed in.
+- [Expressions](/language/expressions/): strings with embedded references, lists, maps, conditionals, `for` expressions and operators.
+- [Variables and outputs](/language/variables-and-outputs/): `variable` and `output` blocks, and how values reach them from files, the environment and the application.
+- [Modules](/language/modules/): grouping configuration in a directory, its inputs and outputs, and the module boundary.
+- [Functions](/language/functions/): the built-in functions, and registering your own.
+
+## Where to go next
+
+The types a configuration can use come from [registries](/registries/). The
+[configuration only example](/examples/configuration-only/) reads a
+configuration into plain types, and the [plugins example](/examples/plugins/)
+runs one through providers.
+
+</Prose>

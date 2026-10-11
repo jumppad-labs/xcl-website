@@ -1,0 +1,220 @@
+---
+layout: ../../layouts/Shell.astro
+title: "References and processing order - xcl"
+description: "Refer to another entity's attribute, a whole entity or a named block by address, and see how references and depends_on decide the order entities are processed in: the referenced entity always first, independent entities concurrently, destroy in reverse."
+---
+import Hero from "../../components/sections/Hero.astro";
+import Prose from "../../components/sections/Prose.astro";
+import CodeTabs from "../../components/CodeTabs.astro";
+
+<Hero
+  heading="References and processing order"
+  sub="A block refers to another by its address, and xcl processes the referenced entity first. References and depends_on together decide the order every operation runs in."
+/>
+
+<Prose>
+
+This page covers how one entity refers to another, by an attribute, as a
+whole value or through a named block, and how those references, together with
+`depends_on`, give the configuration its processing order.
+
+## Referring to another entity
+
+```hcl title="main.xcl"
+database "postgres" "main" {
+  location = "db.internal"
+  port     = 5432
+}
+
+app "web" {
+  image    = "nginx:1.27"
+  location = database.postgres.main.location
+}
+```
+
+An entity is referred to by its address, `database.postgres.main` for a type
+with a subtype and `app.web` for one without, followed by the attribute to
+read; see [Entities](/language/entities/) for how an address is formed. The
+referenced entity is always processed before the entity that refers to it, so
+`database.postgres.main` has its values, including any a provider computes,
+by the time `app.web` is read. An entity's bookkeeping is reachable the same
+way, as `database.postgres.main.meta.id` or `.meta.name`.
+
+A whole entity is a value too. Assign the address alone, or a list of
+addresses, to a field whose type is the referenced entity's own:
+
+```hcl title="main.xcl"
+database "postgres" "main" {
+  location = "db.internal"
+  port     = 5432
+}
+
+database "postgres" "replica" {
+  location = "db-replica.internal"
+}
+
+app "web" {
+  image     = "nginx:1.27"
+  database  = database.postgres.main
+  databases = [database.postgres.main, database.postgres.replica]
+}
+```
+
+In Go the field is typed as the referenced struct, or a slice of it, and
+receives a copy of the entity with its `Meta` filled in. In Python the field's
+type is a plain dataclass naming the attributes to read, marked
+`xcl.field(block=False)` so it is an attribute rather than a nested block;
+attributes the dataclass does not name are dropped, and the registered entity
+class itself can not be used as a field type:
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type PostgreSQL struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Location string `xcl:"location" json:"location"`
+	Port     int    `xcl:"port,optional" json:"port"`
+}
+
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image     string       `xcl:"image" json:"image"`
+	Database  PostgreSQL   `xcl:"database" json:"database"`
+	Databases []PostgreSQL `xcl:"databases,optional" json:"databases"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@xcl.entity("database", "postgres")
+@dataclass
+class PostgreSQL(xcl.Resource):
+    location: str
+    port: int = 5432
+
+
+@dataclass
+class Endpoint:
+    location: str
+    port: int = 5432
+
+
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    database: Endpoint = xcl.field(block=False)
+    databases: list[Endpoint] = xcl.field(block=False, default_factory=list)
+```
+
+  </div>
+</CodeTabs>
+
+## Referring to a named block
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+  host  = "web.internal"
+
+  listener "http" {
+    port = 80
+  }
+
+  listener "https" {
+    port = 443
+  }
+}
+
+gateway "edge" {
+  port  = app.web.listener.https.port
+  ports = { for name, l in app.web.listener : name => l.port }
+}
+```
+
+Blocks collected by name, see
+[Attributes and blocks](/language/attributes-and-blocks/), are reached by
+that name: `app.web.listener.https.port` reads one listener's port. The whole
+collection is a map, so a `for` expression walks every listener; see
+[Expressions](/language/expressions/#for-expressions).
+
+## Processing order
+
+```hcl title="main.xcl"
+database "postgres" "main" {
+  location = "db.internal"
+}
+
+app "web" {
+  image    = "nginx:1.27"
+  location = database.postgres.main.location
+}
+
+cache "sessions" {
+  location = "cache.internal"
+}
+```
+
+Every reference, and every `depends_on` entry, is an edge in a graph of the
+configuration's entities, and an operation walks that graph. The referenced
+entity is processed before the one that refers to it: here
+`database.postgres.main` runs before `app.web`. Entities with no edge between
+them are independent and run concurrently, so `cache.sessions` runs alongside
+the database. Destroy walks the same graph in reverse, removing `app.web`
+before `database.postgres.main`.
+
+A reference that leads back to where it started is a cycle. Validation does
+not catch it; an apply fails with a dependency graph error before any entity
+is processed:
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+  host  = app.api.host
+}
+
+app "api" {
+  image = "ghcr.io/example/api:1.4.2"
+  host  = app.web.host
+}
+```
+
+## depends_on
+
+```hcl title="main.xcl"
+database "postgres" "main" {
+  location = "db.internal"
+}
+
+app "web" {
+  image      = "nginx:1.27"
+  depends_on = ["database.postgres.main"]
+}
+```
+
+`depends_on` orders two entities when no value flows between them. It is a
+list of addresses, and each named entity is processed before this one, exactly
+as if it were referenced. A module can be named too, as
+`depends_on = ["module.networks"]`, so the entity waits for everything the
+module holds. `depends_on` is a built-in field of every entity, beside
+`disabled`; see [Entities](/language/entities/).
+
+## Across modules
+
+Only a module's outputs can be referenced from outside it, as
+`module.db.output.port`. A reference to an entity, variable or nested module
+inside a module fails validation with an error naming the reference, and the
+boundary holds at every level of nesting; see [Modules](/language/modules/).
+
+## Next
+
+- [Expressions](/language/expressions/): what can be written on the right of an `=`.
+- [Entities](/language/entities/): how an address is formed and what every entity has built in.
+- [Modules](/language/modules/): module inputs, outputs and the boundary between them.
+
+</Prose>

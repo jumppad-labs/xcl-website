@@ -7,6 +7,8 @@ import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
+import CodeTabs from "../components/CodeTabs.astro";
+import { pythonRepoURL } from "../config/site";
 
 <Hero
   heading="Events and logging"
@@ -27,6 +29,9 @@ set with `xcl.WithEventHandler`. With no receiver, xcl is silent.
 xcl ships an adapter to the standard library's `log/slog`, so the quickest
 way to see the stream is one option:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 c, err := xcl.NewConfig(
 	xcl.WithEventHandler(events.SlogHandler(slog.Default())),
@@ -35,6 +40,37 @@ if err != nil {
 	return err
 }
 ```
+
+  </div>
+  <div slot="python">
+
+Python has no slog, so the handler writes through the standard library's
+`logging` module instead:
+
+```python title="main.py"
+import logging
+
+import xcl
+
+log = logging.getLogger("xcl")
+
+
+def handler(event: xcl.Event) -> None:
+    if event.error is not None:
+        log.error("%s %s %s: %s", event.operation, event.phase, event.resource_id, event.error)
+    else:
+        log.info("%s %s %s", event.operation, event.phase, event.resource_id)
+
+
+cfg = xcl.Config(on_event=handler)
+```
+
+  </div>
+</CodeTabs>
+
+In Python the handler is any callable taking an `xcl.Event`, passed as
+`on_event`; `xcl.aio.Config` accepts an `async def` handler as well, see the
+<a href={pythonRepoURL}>Python package</a>.
 
 `events.SlogHandler` takes any `*slog.Logger`, so the stream goes wherever
 the rest of your program's logs go, in whatever format its handler writes.
@@ -73,6 +109,9 @@ reserved two.
 
 To handle events yourself, `EventHandler` is a function that takes an event:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 var failures []error
 
@@ -88,6 +127,29 @@ if err != nil {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+failures: list[xcl.Error] = []
+
+
+def handler(event: xcl.Event) -> None:
+    if event.phase == "error":
+        failures.append(event.error)
+
+
+cfg = xcl.Config(on_event=handler)
+```
+
+  </div>
+</CodeTabs>
+
+The Python `xcl.Event` carries the same fields as `time`, `source`,
+`operation`, `phase`, `resource_type`, `resource_id`, `file`, `duration`,
+`error`, `data` and `meta`, with a log message's level and text as
+`event.level` and `event.message`.
+
 ## Sensitive values in event data
 
 Lifecycle events carry entity data only when you ask for it with
@@ -102,6 +164,9 @@ marker inside an envelope naming the masker that produced it:
 Choose another masker with `xcl.WithEventMask`. A keyed hash lets a receiver
 tell whether two events carry the same value without ever seeing it:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 eventMask, err := mask.HashHMACSHA256(correlationKey)
 if err != nil {
@@ -115,10 +180,28 @@ c, err := xcl.NewConfig(
 )
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+event_mask = xcl.mask.hmac_sha256(correlation_key)
+
+cfg = xcl.Config(
+    on_event=handler,
+    event_data="processed",
+    event_mask=event_mask,
+)
+```
+
+  </div>
+</CodeTabs>
+
 Any masker works here, including the built-ins `mask.Omit()`, which writes no
 value, `mask.EncryptAES256GCM(key)` and your own. When every receiver is
 trusted with secrets, `xcl.WithNoEventMask()` turns masking off and event data
-carries the real values. When both options are given, the last one wins.
+carries the real values. When both options are given, the last one wins. In
+Python the options are `event_data="none"`, `"raw"` or `"processed"`,
+`event_mask=` with one of the `xcl.mask` built-ins, and `no_event_mask=True`.
 
 Event masking changes only `Data`. Errors and log details always show
 `(sensitive)`, whatever the event masker, because the sensitive type formats
@@ -126,7 +209,8 @@ itself as the marker. A receiver holding a reversible masker can open a masked
 value with `mask.Unmask(data, m)`; anything it cannot open faithfully, such as
 a hash, data from a different masker or data under a different key, fails with
 `xcl.ErrUnrecoverable` and returns no value. `Event.Entity()` and
-`c.EncodeSavedEntity` show every masked value as `(sensitive)`.
+`c.EncodeSavedEntity`, `event.entity()` and `cfg.encode_saved_entity` in
+Python, show every masked value as `(sensitive)`.
 
 To keep secrets out of the state file as well, see
 [State masking](/state-masking/).
@@ -203,6 +287,9 @@ get their entity and step, is covered in
   before `Validate`, `Apply` or `Destroy` returns, whether it succeeds or
   fails.
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 c, err := xcl.NewConfig(
 	xcl.WithEventHandler(handler),
@@ -213,6 +300,20 @@ if err != nil {
 	return err
 }
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+cfg = xcl.Config(
+    on_event=handler,
+    # hold more undelivered events before emitting waits
+    event_buffer_size=4096,
+)
+```
+
+  </div>
+</CodeTabs>
 
 ## Errors and panics in the receiver
 
@@ -233,7 +334,12 @@ which shows how little an application needs. It is `events.SlogHandler`
 wrapped around a slog handler from
 [charmbracelet/log](https://github.com/charmbracelet/log), chosen for its
 readable, coloured terminal output. It is an example, not part of xcl, so it
-never becomes a dependency of an application that uses xcl.
+never becomes a dependency of an application that uses xcl. The Python tab
+shows the same receiver written with the standard library alone, colouring
+its lines with ANSI escapes.
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="example/prettylog/prettylog.go"
 func Handler(w io.Writer, level slog.Level) xcl.EventHandler {
@@ -250,6 +356,45 @@ func Handler(w io.Writer, level slog.Level) xcl.EventHandler {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="example/prettylog/prettylog.py"
+import os
+from typing import Callable, TextIO
+
+import xcl
+
+RANK = {"debug": 0, "info": 1, "warn": 2, "error": 3}
+COLOUR = {"debug": "\033[90m", "info": "\033[36m", "warn": "\033[33m", "error": "\033[31m"}
+RESET = "\033[0m"
+
+
+def level_from_env() -> str:
+    return os.environ.get("XCL_LOG_LEVEL", "info")
+
+
+def handler(out: TextIO, level: str) -> Callable[[xcl.Event], None]:
+    def handle(event: xcl.Event) -> None:
+        if event.phase == "log":
+            event_level, text = event.level, event.message
+        elif event.phase == "error":
+            event_level, text = "error", f"{event.operation} {event.phase}"
+        else:
+            event_level, text = "info", f"{event.operation} {event.phase}"
+        if RANK.get(event_level, 1) < RANK.get(level, 1):
+            return
+        colour, reset = (COLOUR[event_level], RESET) if out.isatty() else ("", "")
+        stamp = event.time.strftime("%I:%M%p").lstrip("0")
+        out.write(f"{stamp} {colour}{event_level.upper()[:4]}{reset} {text} source={event.source}")
+        # ...
+
+    return handle
+```
+
+  </div>
+</CodeTabs>
+
 It also writes the configuration of each entity it sees created beneath the
 line reporting it. The event itself returns that entity, as the Go type
 registered for its block type, with `Event.Entity()`, and the receiver turns
@@ -263,9 +408,22 @@ Every example sets it up in one line, writing to standard error at the level
 named by `XCL_LOG_LEVEL`, one of `debug`, `info`, `warn` or `error`, and info
 when it is unset:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="example/plugin/main.go"
 	return prettylog.Handler(out, prettylog.LevelFromEnv())
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="example/plugin/main.py"
+    return prettylog.handler(out, prettylog.level_from_env())
+```
+
+  </div>
+</CodeTabs>
 
 A plugin that fails to load, here a Docker plugin path with no binary behind
 it, shows up as a `load` error and then fails the `apply`, while the

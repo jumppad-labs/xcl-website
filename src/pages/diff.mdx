@@ -7,6 +7,8 @@ import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
+import CodeTabs from "../components/CodeTabs.astro";
+import { pythonParityURL } from "../config/site";
 
 <Hero
   heading="Diffs"
@@ -27,6 +29,9 @@ real infrastructure outside xcl.
 `Config.Diff` takes the same paths as `Config.Apply` and fails in the same
 cases, such as a configuration that does not parse or validate:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 import "github.com/jumppad-labs/xcl/diff"
 
@@ -43,11 +48,35 @@ if d.Changed() == 0 {
 fmt.Print(string(diff.Render(d)))
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+d = cfg.diff("./config")
+
+if d.changed() == 0:
+    print("nothing to do")
+    return
+
+s = d.summary
+print(f"{s.create} to create, {s.update} to update, {s.replace} to replace, {s.delete} to delete")
+for resource in d.resources:
+    print(resource.address, resource.action)
+```
+
+The rendered text form, `diff.Render`, is not yet available from Python, so a Python program prints the summary counts and the entities itself; see the <a href={pythonParityURL}>parity list</a>.
+
+  </div>
+</CodeTabs>
+
 The result is plain data. `d.Summary` counts the entities for each action and
 the ones that would stay unchanged, and `d.Changed()` adds up the four actions.
 `d.Resources` lists every entity an apply would change, sorted by address,
 and each one carries its `Changes`, one for each configured value that would
 change:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go
 for _, resource := range d.Resources {
@@ -58,6 +87,22 @@ for _, resource := range d.Resources {
 	}
 }
 ```
+
+  </div>
+  <div slot="python">
+
+```python
+for resource in d.resources:
+    print(resource.address, resource.action)
+
+    for change in resource.changes:
+        print("  ", change.path, change.before, change.after_value)
+```
+
+`change.after_value` is `xcl.UNKNOWN` for a value known only after apply, and `change.after` otherwise.
+
+  </div>
+</CodeTabs>
 
 A change's `Path` locates the value within the entity, such as `image`,
 `ports[0].host` or `env["LOG_LEVEL"]`. `Before` is the saved value and `After`
@@ -126,9 +171,22 @@ secret changed is useful in itself.
 
 Pass `diff.RevealSensitive()` to include both values:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go
 d, err := c.Diff([]string{"./config"}, diff.RevealSensitive())
 ```
+
+  </div>
+  <div slot="python">
+
+```python
+d = cfg.diff("./config", reveal_sensitive=True)
+```
+
+  </div>
+</CodeTabs>
 
 The result then holds the secrets in plain form, and so does anything made
 from it, so print or store it with the same care as the secrets themselves.
@@ -215,6 +273,9 @@ The rendering is plain text with no colour codes unless you ask for colour.
 Pass `diff.Highlight` the same renderer you use to
 [highlight configuration text](/configuration-text/#highlighting):
 
+<CodeTabs>
+  <div slot="go">
+
 ```go
 import "github.com/jumppad-labs/xcl/highlight"
 
@@ -225,6 +286,14 @@ if err != nil {
 
 fmt.Print(string(diff.Render(d, diff.Highlight(renderer))))
 ```
+
+  </div>
+  <div slot="python">
+
+Rendering a diff, with or without colour, is not yet available from Python. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
 
 Added lines use the theme's inserted colour, removed ones its deleted colour,
 and changed and replaced ones its changed colour. Block headers and values are
@@ -275,6 +344,8 @@ none:
   ]
 }
 ```
+
+In Python, `Diff.raw` holds the same JSON document as a dict.
 
 </Prose>
 

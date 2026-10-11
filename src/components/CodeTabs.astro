@@ -1,0 +1,150 @@
+---
+/**
+ * CodeTabs shows one example as a Go tab and a Python tab.
+ *
+ * Each tab's panel is an ordinary fenced code block passed through a named
+ * slot, so Expressive Code still highlights it, frames it and shows its
+ * `title`. The slotted-fence form was confirmed to render through Expressive
+ * Code at build time; the component takes no code props.
+ *
+ *   <CodeTabs>
+ *     <div slot="go">
+ *
+ *     ```go title="main.go"
+ *     ...
+ *     ```
+ *
+ *     </div>
+ *     <div slot="python">
+ *
+ *     ```python title="main.py"
+ *     ...
+ *     ```
+ *
+ *     </div>
+ *   </CodeTabs>
+ *
+ * MDX needs the blank lines after `<div slot="...">` and before `</div>` for
+ * the fence to parse as a code block.
+ *
+ * The component holds no state. Which panel shows is decided by the
+ * page-wide `data-lang` attribute on <html>, set before paint by the script
+ * in Head.astro and updated by the tab handler in Shell.astro, so every box
+ * on a page follows the one choice and the choice carries to the next page.
+ */
+const id = crypto.randomUUID().slice(0, 8);
+
+const languages = [
+  { key: "go", label: "Go" },
+  { key: "python", label: "Python" },
+] as const;
+---
+<div class="code-tabs">
+  <div class="code-tabs-list" role="tablist" aria-label="Language">
+    {languages.map((lang) => (
+      <button
+        type="button"
+        role="tab"
+        id={`code-tabs-${id}-tab-${lang.key}`}
+        aria-controls={`code-tabs-${id}-panel-${lang.key}`}
+        aria-selected={lang.key === "go" ? "true" : "false"}
+        tabindex={lang.key === "go" ? "0" : "-1"}
+        data-lang-choice={lang.key}
+      >
+        {lang.label}
+      </button>
+    ))}
+  </div>
+  <div
+    role="tabpanel"
+    id={`code-tabs-${id}-panel-go`}
+    aria-labelledby={`code-tabs-${id}-tab-go`}
+    data-lang-panel="go"
+  >
+    <slot name="go" />
+  </div>
+  <div
+    role="tabpanel"
+    id={`code-tabs-${id}-panel-python`}
+    aria-labelledby={`code-tabs-${id}-tab-python`}
+    data-lang-panel="python"
+  >
+    <slot name="python" />
+  </div>
+</div>
+
+<style is:global>
+  /* Which panel shows follows the page-wide attribute, not per-box state. */
+  html:not([data-lang="python"]) [data-lang-panel="python"] {
+    display: none;
+  }
+  html[data-lang="python"] [data-lang-panel="go"] {
+    display: none;
+  }
+
+  /* The box takes the rhythm an Expressive Code block would have on its own,
+     and the block inside it gives its own up. Colours and radius match
+     ec.config.mjs so the tab strip sits flush on the code frame. */
+  .code-tabs {
+    margin-block: var(--spacing-md);
+  }
+  .code-tabs:first-child {
+    margin-block-start: 0;
+  }
+  .code-tabs:last-child {
+    margin-block-end: 0;
+  }
+  .code-tabs .expressive-code {
+    margin-block: 0;
+  }
+
+  .code-tabs-list {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem 0;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-bottom: none;
+    border-radius: 0.5rem 0.5rem 0 0;
+  }
+  .code-tabs-list [role="tab"] {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 0.375rem 0.375rem 0 0;
+    padding: 0.375rem 0.875rem;
+    margin-bottom: -1px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .code-tabs-list [role="tab"]:hover {
+    color: var(--color-text-primary);
+  }
+  .code-tabs-list [role="tab"]:focus-visible {
+    outline: 2px solid var(--color-accent-light);
+    outline-offset: -2px;
+  }
+  /* The selected look follows the page-wide attribute too, so the right tab
+     is lit before the handler runs and there is no flash of Go on a Python
+     page. aria-selected is kept in step by the handler for assistive tech. */
+  html:not([data-lang="python"]) .code-tabs-list [data-lang-choice="go"],
+  html[data-lang="python"] .code-tabs-list [data-lang-choice="python"] {
+    color: var(--color-text-primary);
+    background: #1c2128;
+    border-color: #30363d;
+    box-shadow: 0 1px 0 #1c2128;
+  }
+
+  /* Square off the top of the code frame under the tab strip. */
+  .code-tabs [role="tabpanel"] .expressive-code .frame,
+  .code-tabs [role="tabpanel"] .expressive-code .frame .header,
+  .code-tabs [role="tabpanel"] .expressive-code .frame pre {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+</style>

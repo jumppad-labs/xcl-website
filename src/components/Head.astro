@@ -12,3 +12,15 @@ const fallbackDescription =
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>{title}</title>
 <meta name="description" content={description ?? fallbackDescription} />
+<script is:inline>
+  // Apply the reader's language before the page paints, so every CodeTabs box
+  // opens on the stored choice with no flash of Go. "go" is the default, and
+  // a browser that blocks storage still gets a working page.
+  (function () {
+    var lang = "go";
+    try {
+      if (localStorage.getItem("xcl-lang") === "python") lang = "python";
+    } catch (e) {}
+    document.documentElement.dataset.lang = lang;
+  })();
+</script>

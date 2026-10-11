@@ -7,6 +7,8 @@ import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
+import CodeTabs from "../components/CodeTabs.astro";
+import { pythonParityURL } from "../config/site";
 
 <Hero
   heading="State masking"
@@ -37,7 +39,11 @@ a state masker emit no such warning.
 
 Pass a masker to `xcl.WithStateMask`. `mask.EncryptAES256GCM` takes a 32 byte
 key. Keep it wherever the application keeps its secrets and never commit it;
-here it comes from an environment variable:
+here it comes from an environment variable. In Python the masker is
+`xcl.mask.aes256gcm(key)`, passed as `state_mask`:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 key, err := base64.StdEncoding.DecodeString(os.Getenv("XCL_STATE_KEY"))
@@ -56,6 +62,28 @@ c, err := xcl.NewConfig(
 )
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+import base64
+import os
+
+import xcl
+
+key = base64.b64decode(os.environ["XCL_STATE_KEY"])
+
+with xcl.Config(
+    registries=[local],
+    state_path="./state",
+    state_mask=xcl.mask.aes256gcm(key),
+) as cfg:
+    ...
+```
+
+  </div>
+</CodeTabs>
+
 Each sensitive value is written in place of its value as an envelope naming
 the masker that produced it:
 
@@ -71,7 +99,8 @@ hold the envelopes.
 State is read back to the real value, so the state masker must be able to
 recover what it masks: it must implement `mask.Reversible`. A one-way masker
 such as `mask.HashHMACSHA256`, `mask.Omit` or `mask.Redact` fails
-`xcl.NewConfig` with `xcl.ErrMaskNotReversible`:
+`xcl.NewConfig` with `xcl.ErrMaskNotReversible`; in Python, a non-reversible
+`state_mask` raises `xcl.MaskNotReversibleError`:
 
 ```text
 the state masker must be reversible: "hmac-sha256" cannot recover the values it masks
@@ -102,7 +131,9 @@ encrypted state unreadable, so keep the key for as long as the state exists.
 | `mask.Redact()` | `redact` | no | the marker `(sensitive)` |
 
 Only a reversible masker can be used for state. Any masker can be used for
-event data, see [Events and logging](/events/).
+event data, see [Events and logging](/events/). In Python the same four are
+`xcl.mask.aes256gcm(key)`, `xcl.mask.hmac_sha256(key)`, `xcl.mask.redact()`
+and `xcl.mask.omit()`.
 
 ## Writing your own masker
 
@@ -110,6 +141,9 @@ A masker is any type with `Name` and `Mask`. `Mask` receives the JSON of the
 real value and returns the JSON to write as the envelope's `value`. To be used
 for state it also needs `Unmask`, which returns the original JSON, or an error
 when the value does not open:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="masker.go"
 type vaultMasker struct{ client *vault.Client }
@@ -134,6 +168,14 @@ func (m vaultMasker) Unmask(masked json.RawMessage) (json.RawMessage, error) {
 	return m.client.Decrypt(ciphertext)
 }
 ```
+
+  </div>
+  <div slot="python">
+
+Writing your own masker is not yet available from Python. Python programs choose one of the built-in masks `xcl.mask.aes256gcm(key)`, `xcl.mask.hmac_sha256(key)`, `xcl.mask.redact()` and `xcl.mask.omit()`; see the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
 
 The key `xcl_masked` is reserved for envelopes: an object holding it, with at
 most a `value` beside it, is always read as masked data.
