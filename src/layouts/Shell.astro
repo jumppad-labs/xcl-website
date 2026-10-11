@@ -60,6 +60,66 @@ const resolvedDescription = description ?? frontmatter?.description;
         });
       });
 
+      // CodeTabs: one page-wide language. Choosing a tab sets data-lang on
+      // <html>, which the component's CSS reads to show the matching panel in
+      // every box, and stores the choice for the next page. Head.astro applies
+      // the stored choice before paint. Follows the WAI-ARIA tabs pattern:
+      // arrow keys, Home and End move between the tabs of a tablist.
+      (function () {
+        var root = document.documentElement;
+        var tabs = Array.prototype.slice.call(document.querySelectorAll('[data-lang-choice]'));
+        if (tabs.length === 0) return;
+
+        function current() {
+          return root.dataset.lang === 'python' ? 'python' : 'go';
+        }
+
+        function sync() {
+          var lang = current();
+          tabs.forEach(function (tab) {
+            var selected = tab.getAttribute('data-lang-choice') === lang;
+            tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+            tab.setAttribute('tabindex', selected ? '0' : '-1');
+          });
+        }
+
+        function choose(tab) {
+          // Keep the chosen box where it is on screen: panels above it may
+          // change height when every box switches language.
+          var before = tab.getBoundingClientRect().top;
+          root.dataset.lang = tab.getAttribute('data-lang-choice');
+          try {
+            localStorage.setItem('xcl-lang', root.dataset.lang);
+          } catch (e) {}
+          sync();
+          window.scrollBy(0, tab.getBoundingClientRect().top - before);
+        }
+
+        tabs.forEach(function (tab) {
+          tab.addEventListener('click', function () {
+            choose(tab);
+          });
+
+          tab.addEventListener('keydown', function (e) {
+            var siblings = Array.prototype.slice.call(
+              tab.closest('[role="tablist"]').querySelectorAll('[role="tab"]')
+            );
+            var i = siblings.indexOf(tab);
+            var next = -1;
+            if (e.key === 'ArrowRight') next = (i + 1) % siblings.length;
+            else if (e.key === 'ArrowLeft') next = (i - 1 + siblings.length) % siblings.length;
+            else if (e.key === 'Home') next = 0;
+            else if (e.key === 'End') next = siblings.length - 1;
+            if (next < 0) return;
+            e.preventDefault();
+            siblings[next].focus();
+            choose(siblings[next]);
+          });
+        });
+
+        sync();
+      })();
+
       document.querySelectorAll('a[href^="#"]').forEach(function (anchor) {
         anchor.addEventListener('click', function (e) {
           var target = document.querySelector(anchor.getAttribute('href'));

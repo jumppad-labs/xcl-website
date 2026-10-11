@@ -1,0 +1,168 @@
+---
+layout: ../../layouts/Shell.astro
+title: "Expressions - xcl"
+description: "What an attribute's value can be: strings with references inside ${ }, lists, maps, conditionals, for expressions, splat, indexing, attribute access and operators, and why %{ } template directives are rejected."
+---
+import Hero from "../../components/sections/Hero.astro";
+import Prose from "../../components/sections/Prose.astro";
+
+<Hero
+  heading="Expressions"
+  sub="Every value on the right of an = is an expression: a literal, a reference, or something built from them with a conditional, a for expression, an operator or a function call."
+/>
+
+<Prose>
+
+This page covers the forms an attribute's value can take. The examples refer
+to an `app "web"` with two named `listener` blocks and two `volume` blocks, a
+`config_map "api"` with a `data` map, and a `variable "env"`; see
+[References](/language/references/) for how an address is formed.
+
+## Strings with references
+
+```hcl title="main.xcl"
+settings "main" {
+  url = "http://${app.web.host}:${app.web.listener.https.port}"
+}
+```
+
+A string holds an expression inside `${ }`, and the expression's value is
+written into the string where it stands. The expression is any expression on
+this page, a reference as here, a function call or a conditional, and a
+string with a reference inside it refers to that entity like a bare reference
+does, so `app.web` is processed first.
+
+## Lists
+
+```hcl title="main.xcl"
+settings "main" {
+  tags = ["a", "b"]
+}
+```
+
+A list is written in square brackets, separated by commas. Its elements may
+be any expression, including references, so `[app.web, app.api]` is a list of
+two whole entities.
+
+## Maps
+
+```hcl title="main.xcl"
+settings "main" {
+  labels = { env = "prod", tier = "web" }
+}
+```
+
+A map is written in braces as `key = value` pairs, one per line or separated
+by commas. A map value is received by a field typed as a map, such as
+`map[string]string` in Go or `dict[str, str]` in Python; see
+[Attributes and blocks](/language/attributes-and-blocks/).
+
+## Conditionals
+
+```hcl title="main.xcl"
+settings "main" {
+  replicas = variable.env == "prod" ? 3 : 1
+}
+```
+
+`condition ? a : b` takes the value of `a` when the condition is true and `b`
+otherwise. A conditional works inside a string too:
+`"tls=${app.web.listener.https.tls ? "on" : "off"}"`.
+
+## for expressions
+
+```hcl title="main.xcl"
+settings "main" {
+  sources = [for v in app.web.volume : v.source]
+  ports   = { for name, l in app.web.listener : name => l.port }
+}
+```
+
+The list form, in square brackets, builds a list from each element of a list
+or map. The map form, in braces, names a key and a value for each element
+and builds a map; iterating a map, or blocks collected by name, gives the key
+and the element. Here `sources` is the two volumes' sources and `ports` is
+`{ http = 80, https = 443 }`.
+
+## Splat
+
+```hcl title="main.xcl"
+settings "main" {
+  sources = app.web.volume[*].source
+}
+```
+
+`[*]` reads one attribute from every element of a list, giving a list of the
+values. It is the list `for` expression above without the loop: the same
+`sources`, with less to write.
+
+## Indexing and attribute access
+
+```hcl title="main.xcl"
+settings "main" {
+  first   = app.web.volume[0].source
+  db_host = config_map.api.data["db_host"]
+  level   = config_map.api.data.log_level
+}
+```
+
+`[0]` indexes a list, counting from zero. A map is read by key in brackets,
+`data["db_host"]`, or with a dot when the key is a plain name,
+`data.log_level`: the two forms read the same value.
+
+## Operators
+
+```hcl title="main.xcl"
+settings "main" {
+  total     = 2 + 3 * 4                                                   # 14
+  remainder = 10 % 3                                                      # 1
+  bigger    = app.web.listener.https.port > app.web.listener.http.port    # true
+  both      = app.web.listener.https.tls && !app.api.disabled             # true
+  either    = variable.env == "dev" || variable.env == "prod"             # true
+}
+```
+
+Arithmetic operators are `+`, `-`, `*`, `/` and `%`. Comparison operators are
+`==`, `!=`, `<`, `<=`, `>` and `>=`. Logical operators are `&&`, `||` and
+`!`. Multiplication and division bind tighter than addition and subtraction,
+and parentheses group as usual.
+
+## Templating
+
+```hcl title="main.xcl"
+settings "main" {
+  # rejected
+  url = "%{ if app.web.listener.https.tls }https%{ else }http%{ endif }://${app.web.host}"
+}
+```
+
+Template directives, `%{ if }`, `%{ else }`, `%{ endif }` and `%{ for }`, are
+not part of XCL. A string containing one is rejected at the position of the
+`%{`, with the message:
+
+```text
+XCL has no string templating. Use a function such as format, join or
+template_file, or a conditional expression inside ${ }, to build the string.
+```
+
+The same results are written with a conditional inside `${ }`, or with a
+function such as `format` or `join`:
+
+```hcl title="main.xcl"
+settings "main" {
+  url    = "${app.web.listener.https.tls ? "https" : "http"}://${app.web.host}"
+  url2   = format("%s://%s", app.web.listener.https.tls ? "https" : "http", app.web.host)
+  joined = join(",", app.web.volume[*].source)
+}
+```
+
+A string too long or too shaped for an expression belongs in a template file,
+rendered with `template_file`; see [Functions](/language/functions/).
+
+## Next
+
+- [Variables and outputs](/language/variables-and-outputs/): the values a configuration takes in and publishes.
+- [Functions](/language/functions/): the built-in functions and how to add your own.
+- [References](/language/references/): addresses, whole-entity values and processing order.
+
+</Prose>

@@ -20,6 +20,9 @@ image is fixed when Docker creates it, and a network cannot be moved to a new
 address range. A provider knows which is which, so the decision is its own:
 its `Changed` method answers one of three outcomes, and xcl does the rest.
 
+Plugins are written in Go for now. A provider that decides this way works
+from both Go and Python applications.
+
 ## What Changed answers
 
 `Changed` is part of every `plugins.ResourceProvider[T]`, alongside the

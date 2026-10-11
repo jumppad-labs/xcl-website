@@ -7,6 +7,7 @@ import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
+import CodeTabs from "../components/CodeTabs.astro";
 import { templateURL } from "../config/site";
 
 <Hero
@@ -21,6 +22,9 @@ a separate program. The [plugin template](https://github.com/jumppad-labs/xcl-pl
 worked example. Its one entity type, `notes "note"`, writes a note to a file, so
 it needs no Docker, no cloud account and no service: a repository made from
 it builds, passes its tests and applies its sample straight away.
+
+Plugins are written in Go for now. A plugin built from this template works
+from both Go and Python applications.
 
 ```hcl title="examples/basic/main.xcl"
 variable "directory" {
@@ -127,11 +131,26 @@ Each applies the sample, plans it again with no changes and destroys it. An
 application registers the plugin one way or the other on a
 [local registry](/registries/):
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 local := registry.NewLocal()
 local.RegisterPlugin(&notes.Plugin{})                       // in-process
 local.RegisterExternalPlugin("./build/xcl-plugin-template") // a separate program
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+# in-process registration has no Python form: Python loads Go plugins as separate programs
+local = xcl.LocalRegistry()
+local.register_external_plugin("./build/xcl-plugin-template")  # a separate program
+```
+
+  </div>
+</CodeTabs>
 
 ## Release
 
@@ -159,12 +178,28 @@ same archives locally, unsigned.
 An application installs a release with the GitHub registry, trusting the
 author's published public key:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 gh := registry.NewGitHub(registry.GitHubTrustedKeys(publicKey))
 gh.RegisterPlugin("<you>/xcl-plugin-<name>", "v0.1.0")
 
 c, err := xcl.NewConfig(xcl.WithRegistry(gh))
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+gh = xcl.GitHubRegistry(trusted_keys=[public_key])
+gh.register_plugin("<you>/xcl-plugin-<name>", "v0.1.0")
+
+cfg = xcl.Config(registries=[gh])
+```
+
+  </div>
+</CodeTabs>
 
 [Installing plugins from GitHub](/github-registry/) covers pinning, private
 repositories and the cache.
@@ -189,6 +224,9 @@ gpg --show-keys jumppad-labs-releases.asc
 
 Then pass it to the registry:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 publicKey, err := os.ReadFile("jumppad-labs-releases.asc")
 if err != nil {
@@ -198,6 +236,21 @@ if err != nil {
 gh := registry.NewGitHub(registry.GitHubTrustedKeys(string(publicKey)))
 gh.RegisterPlugin("jumppad-labs/xcl-plugin-template", "v0.1.0")
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+from pathlib import Path
+
+public_key = Path("jumppad-labs-releases.asc").read_text()
+
+gh = xcl.GitHubRegistry(trusted_keys=[public_key])
+gh.register_plugin("jumppad-labs/xcl-plugin-template", "v0.1.0")
+```
+
+  </div>
+</CodeTabs>
 
 </Prose>
 

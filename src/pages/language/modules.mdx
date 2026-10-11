@@ -1,0 +1,176 @@
+---
+layout: ../../layouts/Shell.astro
+title: "Modules - xcl"
+description: "A module block brings in a directory of .xcl files with its own variables and outputs. Give it values with variables, read its outputs as module.<name>.output.<name>, and reach inside it from the application by address."
+---
+import Hero from "../../components/sections/Hero.astro";
+import Prose from "../../components/sections/Prose.astro";
+import CodeTabs from "../../components/CodeTabs.astro";
+
+<Hero
+  heading="Modules"
+  sub="A module is a directory of configuration with variables going in and outputs coming out. The parent sets the variables, reads the outputs, and sees nothing else inside."
+/>
+
+<Prose>
+
+This page covers the `module` block: how a module is declared and given its
+values, how its outputs are read, what the module boundary allows, how the
+application finds entities inside a module, and which module sources work
+today.
+
+## Using a module
+
+```hcl title="main.xcl"
+module "db" {
+  source = "./modules/postgres"
+
+  variables = {
+    size = "small"
+  }
+}
+```
+
+A `module` block names a directory of `.xcl` files with `source`, a path
+relative to the file declaring the module. Every `.xcl` file in that
+directory is read as part of the module. The `variables` object gives values
+to the module's own `variable` blocks, matched by name: the module declares
+each variable it takes, with a default, and reads it as it would any other
+variable.
+
+```hcl title="modules/postgres/main.xcl"
+variable "size" {
+  default = "medium"
+}
+
+database "postgres" "main" {
+  location = "postgres.internal"
+  size     = variable.size
+}
+```
+
+Here `variable.size` is `"small"` inside the module, because the parent set
+it; a module used without a `size` in its `variables` gets the default,
+`"medium"`. The types a module's blocks use are declared on the application's
+registries like any other, see [Registries](/registries/).
+
+## Reading a module's outputs
+
+```hcl title="modules/postgres/main.xcl"
+output "port" {
+  value = database.postgres.main.port
+}
+```
+
+An `output` block inside the module publishes a value to the parent, which
+reads it as `module.<name>.output.<name>`:
+
+```hcl title="main.xcl"
+app "web" {
+  image         = "nginx:1.27"
+  database_port = module.db.output.port
+}
+```
+
+The reference puts `app.web` after the module in the graph, so the module's
+entities are processed first. A module's output may be passed straight into
+another module's `variables`, which orders the two modules the same way.
+Outputs are described on [Variables and outputs](/language/variables-and-outputs/#outputs).
+
+## The module boundary
+
+Configuration reaches inside a module only through its outputs. A reference
+from outside to an entity, a variable or a nested module inside it is
+rejected by validation:
+
+```hcl title="main.xcl"
+app "web" {
+  image         = "nginx:1.27"
+  database_port = module.db.database.postgres.main.port
+}
+```
+
+```text
+resource 'app.web' refers to 'module.db.database.postgres.main.port', which is inside module 'db'; only a module's outputs can be referenced from outside it
+```
+
+The module itself may be named, so `depends_on = ["module.db"]` is allowed
+and waits for everything the module declares.
+
+The boundary holds at every level of nesting: a parent reaches only its direct
+children's outputs, so `module.a.b.output.value` is rejected from the root.
+To expose a value from a module nested further down, each module in between
+re-exports it as an output of its own. Here module `a` uses module `b` and
+re-exports `b`'s output:
+
+```hcl title="a/b/main.xcl"
+output "value" {
+  value = "from-b"
+}
+```
+
+```hcl title="a/main.xcl"
+module "b" {
+  source = "./b"
+}
+
+output "from_b" {
+  value = module.b.output.value
+}
+```
+
+```hcl title="main.xcl"
+module "a" {
+  source = "./a"
+}
+
+output "deep" {
+  value = module.a.output.from_b
+}
+```
+
+## Finding entities inside a module from the application
+
+The boundary applies to references written in configuration. The application
+can look up any entity inside a module by its full address, which carries the
+`module.<name>.` prefix; an entity in a module nested inside another is
+addressed `module.a.b.<address>`:
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="main.go"
+db, err := xcl.Find[PostgreSQL](c, "module.db.database.postgres.main")
+if err != nil {
+	return err
+}
+fmt.Println(db.Location)
+```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+db = cfg.find(PostgreSQL, "module.db.database.postgres.main")
+print(db.location)
+```
+
+  </div>
+</CodeTabs>
+
+## Module sources
+
+Today `source` is a local directory path, relative to the file declaring the
+module. Git, GitHub and HTTP sources are not yet supported. A `version`
+attribute is accepted on the block but not used.
+
+## Next
+
+- [Functions](/language/functions/): the built-in functions and how an
+  application adds its own.
+- [Variables and outputs](/language/variables-and-outputs/): the two sides of
+  a module's interface.
+- [References](/language/references/): how references order entities,
+  including modules.
+
+</Prose>

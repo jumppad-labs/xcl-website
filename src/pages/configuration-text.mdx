@@ -7,6 +7,8 @@ import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
+import CodeTabs from "../components/CodeTabs.astro";
+import { pythonParityURL } from "../config/site";
 
 <Hero
   heading="Configuration text"
@@ -25,6 +27,9 @@ can colour the text it writes, for a terminal or any other format.
 
 Pass any entity a lookup returns:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 db, err := xcl.Find[*Postgres](c, "database.postgres.main")
 if err != nil {
@@ -38,6 +43,14 @@ if err != nil {
 
 fmt.Println(string(text))
 ```
+
+  </div>
+  <div slot="python">
+
+Converting a live entity to text is not yet available from Python. Python renders a saved record instead, with `cfg.encode_saved_entity`, shown under [Converting saved data](#converting-saved-data). See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
 
 ```hcl
 database "postgres" "main" {
@@ -62,9 +75,24 @@ and events carry it at `xcl.EventDataProcessed`. The record's type is resolved
 through the Config, from the Go types its registries declare and the types
 its plugins provide, and its plugins are loaded if they are not loaded already:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go
 text, err := c.EncodeSavedEntity(event.Data)
 ```
+
+  </div>
+  <div slot="python">
+
+```python
+text = cfg.encode_saved_entity(event.data)
+```
+
+Here `event` is the `xcl.Event` an `on_event` handler receives, and `event.data` holds the saved record when the Config was created with `event_data="processed"`. With `xcl.aio.Config` the call is `await cfg.encode_saved_entity(event.data)`.
+
+  </div>
+</CodeTabs>
 
 The text is identical to what `EncodeEntity` returns for the same entity. A
 record naming a type the Config does not know fails with
@@ -77,6 +105,9 @@ the entity an event carries, as the Go type registered for its block type and
 with every sensitive value masked, ready for `EncodeEntity`. It returns nil
 when the event carries no data:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go
 entity, err := e.Entity()
 if err != nil || entity == nil {
@@ -86,15 +117,40 @@ if err != nil || entity == nil {
 text, err := xcl.EncodeEntity(entity)
 ```
 
+  </div>
+  <div slot="python">
+
+```python
+entity = event.entity()
+if entity is None:
+    return
+```
+
+Python has no `EncodeEntity`, so turning the entity into text still goes through the Config, with `cfg.encode_saved_entity(event.data)`.
+
+  </div>
+</CodeTabs>
+
 ## Provider-filled values
 
 Values a provider filled in, such as an address or an id it assigned, are left
 out by default. Ask for them with `xcl.IncludeComputed()`, and each one is
 marked so a reader can tell it apart:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go
 text, err := xcl.EncodeEntity(db, xcl.IncludeComputed())
 ```
+
+  </div>
+  <div slot="python">
+
+The `IncludeComputed` option has no Python form; `cfg.encode_saved_entity` renders the saved record as it is, without provider-filled values. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
 
 ```hcl
 database "postgres" "main" {
@@ -160,9 +216,20 @@ app "web" {
 }
 ```
 
+<CodeTabs>
+  <div slot="go">
+
 ```go
 text, err := xcl.EncodeEntity(app, xcl.ShowReferences())
 ```
+
+  </div>
+  <div slot="python">
+
+Showing references as written is not yet available from Python; `cfg.encode_saved_entity` writes the resolved values. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
 
 the text shows each reference as it was written:
 
@@ -209,6 +276,9 @@ xcl ships a terminal renderer in the `highlight` package. With no theme it
 uses only the terminal's 16 standard colours, so the result follows the
 user's own palette:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go
 import "github.com/jumppad-labs/xcl/highlight"
 
@@ -220,9 +290,24 @@ if err != nil {
 text, err := xcl.EncodeEntity(entity, xcl.Highlight(renderer))
 ```
 
+  </div>
+  <div slot="python">
+
+```python
+print(cfg.encode_saved_entity(event.data, highlight=True))
+```
+
+`highlight=True` uses the terminal renderer with no theme.
+
+  </div>
+</CodeTabs>
+
 xcl never checks whether output is a terminal. Whether to colour is your
 decision, so ask for highlighting only when the output shows colour, for
 example:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go
 options := []xcl.EncodeOption{xcl.IncludeComputed()}
@@ -232,6 +317,18 @@ if isTerminal(os.Stdout) {
 
 text, err := xcl.EncodeEntity(entity, options...)
 ```
+
+  </div>
+  <div slot="python">
+
+```python
+import sys
+
+text = cfg.encode_saved_entity(event.data, highlight=sys.stdout.isatty())
+```
+
+  </div>
+</CodeTabs>
 
 Here `isTerminal` is your application's own check. The
 [logging example](https://github.com/jumppad-labs/xcl/tree/main/example/prettylog)
@@ -246,6 +343,9 @@ Give the renderer a VS Code colour theme and it colours tokens the way the
 editor does with that theme, in 24-bit colour, with the bold, italic,
 underline and strikethrough styles the theme sets:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go
 renderer, err := highlight.NewANSIRenderer(highlight.WithThemeFile("dark-plus.json"))
 if errors.Is(err, xcl.ErrInvalidTheme) {
@@ -254,6 +354,14 @@ if errors.Is(err, xcl.ErrInvalidTheme) {
 	log.Fatalf("theme %s: %s", detail.Source, detail.Reason)
 }
 ```
+
+  </div>
+  <div slot="python">
+
+Editor themes are not yet available from Python; `cfg.encode_saved_entity` offers `highlight=True` only, with the terminal's 16 standard colours. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
 
 `highlight.WithTheme` reads the theme from an `io.Reader` instead. The theme
 is the JSON file a VS Code theme extension ships, and comments and trailing
@@ -275,6 +383,9 @@ attribute name. Text the grammar leaves unlabelled, such as whitespace, braces
 and commas, is passed too, with an empty scope, so a renderer for a format that
 needs escaping sees every byte:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go
 renderer := highlight.RendererFunc(func(scope, text string) string {
 	text = html.EscapeString(text)
@@ -288,6 +399,14 @@ renderer := highlight.RendererFunc(func(scope, text string) string {
 
 text, err := xcl.EncodeEntity(entity, xcl.Highlight(renderer))
 ```
+
+  </div>
+  <div slot="python">
+
+Writing a renderer is not yet available from Python; `cfg.encode_saved_entity` offers `highlight=True` only. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
 
 Every scope is exported as a string constant named `highlight.Scope...`, such as
 `highlight.ScopeAttribute` and `highlight.ScopeReference`, so a renderer can

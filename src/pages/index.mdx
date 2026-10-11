@@ -11,13 +11,14 @@ import Badge from "../components/Badge.astro";
 import Button from "../components/Button.astro";
 import InstallBlock from "../components/InstallBlock.astro";
 import FeatureCard from "../components/FeatureCard.astro";
+import CodeTabs from "../components/CodeTabs.astro";
 
 <Hero
   variant="centered"
   heading="XCL: a modern relational configuration language"
-  sub="A configuration language built on the readability of HCL. Blocks relate to each other through references, are processed in dependency order and run through plugins, so configuration can be planned, applied, changed and destroyed. Available for Go today, with Python, JavaScript and more to come."
+  sub="A configuration language built on the readability of HCL. Blocks relate to each other through references, are processed in dependency order and run through plugins, so configuration can be planned, applied, changed and destroyed. Available for Go and Python."
 >
-  <Badge slot="badge" text="v0.2.2 · Initial Release" variant="green" dot />
+  <Badge slot="badge" text="v0.4.0 · Go and Python" variant="green" dot />
   <InstallBlock slot="install" command="go get github.com/jumppad-labs/xcl" />
   <Button href="/examples/configuration-only/" label="See an example →" variant="primary" large />
   <Button href="https://github.com/jumppad-labs/xcl" label="View on GitHub" variant="secondary" large external />
@@ -39,8 +40,11 @@ import FeatureCard from "../components/FeatureCard.astro";
   syntax matches HCL's, so editors and formatters carry over, but it will grow
   where configuration needs it to.
 
-  The Go library is the first implementation. You describe a block type once,
-  as a Go struct with `xcl` tags:
+  You describe a block type once, as a Go struct with `xcl` tags or as a
+  Python dataclass:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="resources.go"
 // PostgreSQL defines the block type `database "postgres"`
@@ -61,6 +65,31 @@ type PostgreSQL struct {
 	ConnectionString string `xcl:"connection_string,optional,computed" json:"connection_string,omitempty"`
 }
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+# PostgreSQL defines the block type `database "postgres"`
+@xcl.entity("database", "postgres")
+@dataclass
+class PostgreSQL(xcl.Resource):
+    location: str
+    port: int
+    username: str
+
+    # Sensitive: shown only as (sensitive), read with reveal()
+    password: xcl.Sensitive[str]
+
+    # A nested block, optional because it may be None
+    timeouts: Timeouts | None = None
+
+    # Set by a provider, never by configuration
+    connection_string: xcl.Computed[str] = None
+```
+
+  </div>
+</CodeTabs>
 
   Every block type is registered with a type and, optionally, a subtype,
   which become the block's labels. `PostgreSQL` is registered with the type
@@ -95,7 +124,10 @@ app "web" {
 }
 ```
 
-  And read it back as your own Go type:
+  And read it back as your own type:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 // a plugin providing database "postgres" and app, with providers that create them
@@ -122,6 +154,36 @@ if err != nil {
 
 fmt.Println(db.Location, db.Port)
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+# a plugin providing database "postgres" and app, with providers that create them;
+# Python loads a Go plugin as a separate program
+local = xcl.LocalRegistry()
+local.register_external_plugin("./bin/xcl-plugin-postgres")
+
+cfg = xcl.Config(
+    registries=[local],
+    # optional, xcl writes nothing of its own without a receiver
+    on_event=lambda event: logging.info("%s %s %s", event.operation, event.phase, event.resource_id),
+)
+
+cfg.apply("./config")
+
+db = cfg.find(PostgreSQL, "database.postgres.main")
+
+print(db.location, db.port)
+```
+
+  </div>
+</CodeTabs>
+
+  The [language reference](/language/) describes every part of XCL, with the
+  Go and Python types beside each shape of configuration.
+
+  <Button href="/language/" label="Learn the language →" variant="secondary" />
 
 </Section>
 
@@ -155,6 +217,7 @@ fmt.Println(db.Location, db.Port)
     blocks expose values, including lists and maps. In Go an output is an
     entity like any other: `Find[types.Output]` returns it, and `.Value`
     holds what it publishes.
+    [Variables and outputs →](/language/variables-and-outputs/)
   </FeatureCard>
 
   <FeatureCard icon="📦" title="Modules">
@@ -163,6 +226,7 @@ fmt.Println(db.Location, db.Port)
     `module.<name>.output.<name>`. Outputs are the only way in: anything
     else inside a module is rejected by validation. Modules can nest, and a
     nested module's value is exposed by re-exporting it as an output.
+    [Modules →](/language/modules/)
   </FeatureCard>
 
   <FeatureCard icon="ƒ" title="Functions">
@@ -171,6 +235,7 @@ fmt.Println(db.Location, db.Port)
     `dir`, `len` and `element`. And your own: register a Go function with
     the application, or offer one from a plugin, and configuration calls it
     by name like any builtin.
+    [Functions →](/language/functions/)
   </FeatureCard>
 
   <FeatureCard icon="🔌" title="Plugins and providers">
@@ -245,6 +310,14 @@ fmt.Println(db.Location, db.Port)
   - [Configuration only](/examples/configuration-only/): a Kubernetes-like
     deployment read into Go types, with entities linked to each other by
     reference, and reported as the route each ingress path takes. No plugins.
+
+</Section>
+
+<Section heading="Documentation">
+
+  - [Language reference](/language/): files, entities, attributes and blocks,
+    references, expressions, variables and outputs, modules and functions,
+    each shape of configuration beside its Go and Python types.
 
 </Section>
 

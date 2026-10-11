@@ -1,0 +1,578 @@
+---
+layout: ../../layouts/Shell.astro
+title: "Attributes and blocks - xcl"
+description: "Every shape an XCL entity type can declare: required and optional attributes, nested blocks, lists of blocks, named blocks collected by name, map attributes, object values, computed and sensitive fields, and the base every entity type builds on."
+---
+import Hero from "../../components/sections/Hero.astro";
+import Prose from "../../components/sections/Prose.astro";
+import CodeTabs from "../../components/CodeTabs.astro";
+
+<Hero
+  heading="Attributes and blocks"
+  sub="How each shape is written in configuration, and how the Go struct or Python dataclass declares it."
+/>
+
+<Prose>
+
+An entity type declares what its blocks may contain: attributes that take a
+value, and nested blocks that group values. In Go each is a struct field with
+an `xcl` tag; in Python each is a dataclass field whose annotation gives its
+shape. This page walks through every shape with one entity type, an `app`,
+adding a field for each.
+
+## Required attributes
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+}
+```
+
+An attribute with no option is required: a block that leaves it out is an
+error at the block's position.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image string `xcl:"image" json:"image"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+```
+
+  </div>
+</CodeTabs>
+
+## Optional attributes
+
+```hcl title="main.xcl"
+app "web" {
+  image    = "nginx:1.27"
+  replicas = 3
+}
+```
+
+The `optional` option lets a block leave the attribute out. In Python a field
+with a default, or annotated `| None`, is optional. The tag carries no
+default: the Python dataclass default is the value an omitted attribute gets,
+and in Go the application decides what an omitted `replicas` means.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image    string `xcl:"image" json:"image"`
+	Replicas int    `xcl:"replicas,optional" json:"replicas,omitempty"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    replicas: int = 2
+```
+
+  </div>
+</CodeTabs>
+
+## Nested blocks
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+
+  health {
+    path     = "/healthz"
+    interval = 10
+  }
+}
+```
+
+A field whose type is a struct, tagged `block`, is a nested block. A pointer
+makes the block optional; a plain struct makes it required, so a block that
+leaves it out is an error at the block's position. The nested type is not an
+entity: it does not embed `types.ResourceBase` and has no address of its own.
+In Python a field annotated with a dataclass is a block, and `| None` with a
+default of `None` makes it optional.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type Health struct {
+	Path     string `xcl:"path" json:"path"`
+	Interval int    `xcl:"interval,optional" json:"interval,omitempty"`
+}
+
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image  string  `xcl:"image" json:"image"`
+	Health *Health `xcl:"health,block" json:"health,omitempty"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@dataclass
+class Health:
+    path: str
+    interval: int = 10
+
+
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    health: Health | None = None
+```
+
+  </div>
+</CodeTabs>
+
+## Lists of blocks
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+
+  volume "data" {
+    source = "/var/lib/web"
+  }
+
+  volume {
+    source = "/tmp/cache"
+  }
+}
+```
+
+A slice of structs tagged `block` takes the block any number of times, and
+the order the blocks are written in is the order of the slice. An element
+type may declare a field tagged `label`, and then a block may carry a name
+after the keyword, `volume "data" {}`. The name is not required: named and
+unnamed blocks may mix in one list, and an unnamed block leaves the field
+empty. Read an element by position, `app.web.volume[0].source`, or all of
+them with a splat, `app.web.volume[*].source`; see
+[Expressions](/language/expressions/).
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type Volume struct {
+	Name   string `xcl:"name,label" json:"name,omitempty"`
+	Source string `xcl:"source" json:"source"`
+}
+
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image   string   `xcl:"image" json:"image"`
+	Volumes []Volume `xcl:"volume,block" json:"volumes,omitempty"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@dataclass
+class Volume:
+    source: str
+    name: str = xcl.field(label=True, default="")
+
+
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    volume: list[Volume] = xcl.field(default_factory=list)
+```
+
+  </div>
+</CodeTabs>
+
+## Named blocks collected by name
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+
+  listener "http" {
+    port = 80
+  }
+
+  listener "https" {
+    port = 443
+    tls  = true
+  }
+}
+```
+
+A map of structs tagged `block`, whose element type has a `label` field,
+collects the blocks by their name. Each block must carry a name, and each
+name is used once. Another entity reaches one by its name,
+`app.web.listener.https.port`, and iterates them with a `for` expression,
+`{ for name, l in app.web.listener : name => l.port }`.
+
+A block without a name is an error at the block: `listener blocks are
+collected by name`. A second block with a name already used is an error at
+the second block: `Duplicate listener name: A listener named "http" was
+already defined at <file>:<line>,<col>-<col>`.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type Listener struct {
+	Name string `xcl:"name,label" json:"name"`
+	Port int    `xcl:"port" json:"port"`
+	TLS  bool   `xcl:"tls,optional" json:"tls,omitempty"`
+}
+
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image     string              `xcl:"image" json:"image"`
+	Listeners map[string]Listener `xcl:"listener,block" json:"listeners,omitempty"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@dataclass
+class Listener:
+    port: int
+    tls: bool = False
+    name: str = xcl.field(label=True, default="")
+
+
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    listener: dict[str, Listener] = xcl.field(default_factory=dict)
+```
+
+  </div>
+</CodeTabs>
+
+## Map attributes
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+
+  labels = {
+    team = "platform"
+    tier = "frontend"
+  }
+}
+```
+
+A `map[string]string` field, or any map of plain values, is an attribute
+that takes a map value. It is supported, and fits values that really are a
+flat set of keys, such as labels. For anything with structure, named blocks
+are the encouraged style: a map value has no labels, each entry is a single
+value rather than a block of its own, and a map has no order.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image  string            `xcl:"image" json:"image"`
+	Labels map[string]string `xcl:"labels,optional" json:"labels,omitempty"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    labels: dict[str, str] = xcl.field(default_factory=dict)
+```
+
+  </div>
+</CodeTabs>
+
+## Object values
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+
+  default_endpoint = { port = 80, tls = true }
+}
+```
+
+A struct field without the `block` option is an attribute that takes an
+object value, written with `=` and braces, rather than a nested block. The
+object's fields are declared like any other: a field tagged `optional` may be
+left out of the object. In Python a dataclass-typed field is a block by
+default, and `xcl.field(block=False)` makes it an object attribute instead.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type Endpoint struct {
+	Port int  `xcl:"port" json:"port"`
+	TLS  bool `xcl:"tls,optional" json:"tls,omitempty"`
+}
+
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image           string   `xcl:"image" json:"image"`
+	DefaultEndpoint Endpoint `xcl:"default_endpoint,optional" json:"default_endpoint,omitempty"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@dataclass
+class Endpoint:
+    port: int
+    tls: bool = False
+
+
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    default_endpoint: Endpoint | None = xcl.field(block=False, default=None)
+```
+
+  </div>
+</CodeTabs>
+
+## Computed fields
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+}
+
+output "url" {
+  value = app.web.endpoint
+}
+```
+
+A field with the `computed` option belongs to the provider: the provider
+sets it when the entity is applied, and other blocks can read it. A block
+that sets a computed field in configuration is an error at that attribute.
+In Python the annotation `xcl.Computed[T]` marks the field.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image    string `xcl:"image" json:"image"`
+	Endpoint string `xcl:"endpoint,optional,computed" json:"endpoint,omitempty"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    endpoint: xcl.Computed[str] = None
+```
+
+  </div>
+</CodeTabs>
+
+## Sensitive fields
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+  token = env("WEB_TOKEN")
+}
+```
+
+A field of type `types.Sensitive[T]` is set like a plain field but shown as
+`(sensitive)` everywhere xcl and the application print it; the real value is
+reached only with `Reveal()`. In Python the annotation is
+`xcl.Sensitive[T]`, and a sensitive value looked up through `cfg.find` is
+redacted, so `reveal()` returns `None`. See [Sensitive values](/sensitive-values/).
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image string                  `xcl:"image" json:"image"`
+	Token types.Sensitive[string] `xcl:"token,optional" json:"token,omitempty"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    token: xcl.Sensitive[str] | None = None
+```
+
+  </div>
+</CodeTabs>
+
+## The entity base
+
+Every entity type builds on the same base. In Go it embeds
+`types.ResourceBase` with the `xcl:",remain"` tag, which gives it
+`depends_on`, `disabled` and `meta`; in Python it subclasses `xcl.Resource`.
+See [Built-in fields](/language/entities/#built-in-fields). Put together,
+the `app` type this page has built is:
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type App struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image           string                  `xcl:"image" json:"image"`
+	Replicas        int                     `xcl:"replicas,optional" json:"replicas,omitempty"`
+	Health          *Health                 `xcl:"health,block" json:"health,omitempty"`
+	Volumes         []Volume                `xcl:"volume,block" json:"volumes,omitempty"`
+	Listeners       map[string]Listener     `xcl:"listener,block" json:"listeners,omitempty"`
+	Labels          map[string]string       `xcl:"labels,optional" json:"labels,omitempty"`
+	DefaultEndpoint Endpoint                `xcl:"default_endpoint,optional" json:"default_endpoint,omitempty"`
+	Endpoint        string                  `xcl:"endpoint,optional,computed" json:"endpoint,omitempty"`
+	Token           types.Sensitive[string] `xcl:"token,optional" json:"token,omitempty"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@xcl.entity("app")
+@dataclass
+class App(xcl.Resource):
+    image: str
+    replicas: int = 2
+    health: Health | None = None
+    volume: list[Volume] = xcl.field(default_factory=list)
+    listener: dict[str, Listener] = xcl.field(default_factory=dict)
+    labels: dict[str, str] = xcl.field(default_factory=dict)
+    default_endpoint: Endpoint | None = xcl.field(block=False, default=None)
+    endpoint: xcl.Computed[str] = None
+    token: xcl.Sensitive[str] | None = None
+```
+
+  </div>
+</CodeTabs>
+
+Types that share fields share them through the base too. In Go, put the
+common fields in a struct that embeds `types.ResourceBase`, and embed that
+struct, again with `xcl:",remain"`, in each type. In Python, put them in a
+dataclass that subclasses `xcl.Resource` and subclass it; the base must
+itself be a dataclass, and only the registered class carries `@xcl.entity`.
+A subclass that adds a required field after the base's defaulted ones is
+declared `@dataclass(kw_only=True)`, as the dataclass rules require.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="resources.go"
+type Workload struct {
+	types.ResourceBase `xcl:",remain"`
+
+	Image    string `xcl:"image" json:"image"`
+	Replicas int    `xcl:"replicas,optional" json:"replicas,omitempty"`
+}
+
+type App struct {
+	Workload `xcl:",remain"`
+
+	Listeners map[string]Listener `xcl:"listener,block" json:"listeners,omitempty"`
+}
+
+type Job struct {
+	Workload `xcl:",remain"`
+
+	Schedule string `xcl:"schedule" json:"schedule"`
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@dataclass
+class Workload(xcl.Resource):
+    image: str
+    replicas: int = 2
+
+
+@xcl.entity("app")
+@dataclass
+class App(Workload):
+    listener: dict[str, Listener] = xcl.field(default_factory=dict)
+
+
+@xcl.entity("job")
+@dataclass(kw_only=True)
+class Job(Workload):
+    schedule: str
+```
+
+  </div>
+</CodeTabs>
+
+## Next
+
+[References and processing order](/language/references/) covers how one
+entity's attributes read another's, and the order that gives. For the
+sensitive field, see [Sensitive values](/sensitive-values/); for how an
+entity's text is printed back, see [Configuration text](/configuration-text/).
+
+</Prose>

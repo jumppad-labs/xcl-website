@@ -8,6 +8,19 @@ type NavItem =
 const items: NavItem[] = [
   { label: "Features", href: "/#features" },
   {
+    label: "Language",
+    children: [
+      { label: "Overview", href: "/language/" },
+      { label: "Entities", href: "/language/entities/" },
+      { label: "Attributes and blocks", href: "/language/attributes-and-blocks/" },
+      { label: "References", href: "/language/references/" },
+      { label: "Expressions", href: "/language/expressions/" },
+      { label: "Variables and outputs", href: "/language/variables-and-outputs/" },
+      { label: "Modules", href: "/language/modules/" },
+      { label: "Functions", href: "/language/functions/" },
+    ],
+  },
+  {
     label: "Examples",
     children: [
       { label: "Plugins and the lifecycle", href: "/examples/plugins/" },

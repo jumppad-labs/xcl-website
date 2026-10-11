@@ -1,0 +1,227 @@
+---
+layout: ../../layouts/Shell.astro
+title: "Variables and outputs - xcl"
+description: "Declare variables with a default, set them from .vars files, XCL_VAR_ environment variables or the application, and publish values with output blocks that the application reads back by address."
+---
+import Hero from "../../components/sections/Hero.astro";
+import Prose from "../../components/sections/Prose.astro";
+import CodeTabs from "../../components/CodeTabs.astro";
+
+<Hero
+  heading="Variables and outputs"
+  sub="A variable is a value the configuration takes in, with a default and three ways to override it. An output is a value the configuration publishes, read by the application and, from a module, by the module's parent."
+/>
+
+<Prose>
+
+This page covers the `variable` and `output` blocks: how a variable is
+declared and read, where its value comes from and which source wins, and how
+an output is declared and read back from the application.
+
+## Declaring variables
+
+```hcl title="main.xcl"
+variable "region" {
+  default     = "eu"
+  description = "The region the application runs in"
+}
+
+app "web" {
+  image  = "nginx:1.27"
+  region = variable.region
+}
+```
+
+A `variable` block takes a `default`, which is required, and an optional
+`description`. Configuration reads the variable as `variable.<name>`, here
+`variable.region`. A variable's value is any value an attribute can hold: a
+string, a number, a bool, a list or a map.
+
+## Defaults built from other values
+
+```hcl title="main.xcl"
+variable "url" {
+  default = "http://${app.web.host}"
+}
+
+app "web" {
+  image = "nginx:1.27"
+  host  = "web.internal"
+}
+```
+
+A default is an expression like any other attribute value, so it may hold
+references to other entities and function calls, not only literals. This is
+where a derived value lives: declare a variable whose default is built from
+the values it depends on, and read it as `variable.url` wherever it is needed.
+The references are followed when the variable is evaluated, so `variable.url`
+above is `http://web.internal`.
+
+## Setting variables from the application
+
+The application sets a variable when it creates the `Config`. A value given
+here overrides every other source:
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="main.go"
+local := registry.NewLocal()
+local.RegisterType(&App{}, "app")
+
+c, err := xcl.NewConfig(
+	xcl.WithRegistry(local),
+	xcl.WithVariables(map[string]any{"region": "us"}),
+)
+if err != nil {
+	return err
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+local = xcl.LocalRegistry()
+local.register_type(App)
+
+with xcl.Config(registries=[local], variables={"region": "us"}) as cfg:
+    cfg.apply("./config")
+```
+
+  </div>
+</CodeTabs>
+
+## .vars files
+
+```hcl title="prod.vars"
+region   = "us"
+replicas = 3
+```
+
+A `.vars` file holds attributes only, one per variable, and no blocks. Every
+file ending in `.vars` in the directory of each path given to an operation is
+read; a path that is a file is read from its own directory. The search is not
+recursive, and there is no option to name a `.vars` file: a file is read
+because of where it is.
+
+## Environment variables
+
+```shell
+export XCL_VAR_region=us
+```
+
+An environment variable named `XCL_VAR_<name>` sets the variable `<name>`.
+Only variables with the `XCL_VAR_` prefix are read; any other environment
+variable is ignored, and configuration that needs one reads it with the
+`env` function instead. See [Functions](/language/functions/).
+
+## Precedence
+
+A variable takes its value from the last of these sources that sets it, each
+overriding the one before:
+
+1. the variable's `default`
+2. `.vars` files
+3. `XCL_VAR_` environment variables
+4. values given by the application, with `xcl.WithVariables` or `variables=`
+
+## Outputs
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+  host  = "web.internal"
+  port  = 80
+}
+
+app "api" {
+  image = "api:1.4"
+  host  = "api.internal"
+  port  = 8080
+}
+
+output "url" {
+  value       = "http://${app.web.host}"
+  description = "The address the web application is reached at"
+}
+
+output "hosts" {
+  value = [app.web.host, app.api.host]
+}
+
+output "ports" {
+  value = {
+    web = app.web.port
+    api = app.api.port
+  }
+}
+```
+
+An `output` block publishes a `value`, with an optional `description`. The
+value is any expression, so an output can publish a string, a list or a map
+built from other entities. The application reads an output back by its
+address, `output.url`, as the next section shows.
+
+A module's outputs are read from its parent as `module.<name>.output.<name>`,
+and they are the only way to reach inside the module; the parts of a list or
+map output are read by index or key, `module.db.output.hosts[0]` and
+`module.db.output.ports.web`. See [Modules](/language/modules/).
+
+Reading an output from another block in the same configuration, as
+`output.url`, is not yet supported. A value several blocks share belongs in a
+variable whose default builds it; see
+[Defaults built from other values](#defaults-built-from-other-values).
+
+## Reading outputs from the application
+
+Once the configuration is applied, `Outputs` returns every published value
+keyed by address, including the outputs of modules at any depth, such as
+`module.db.output.port`. In Go, `Find` with `types.Output` returns the output
+entity itself, and its `Value` holds the published value:
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="main.go"
+if err := c.Apply("./config"); err != nil {
+	return err
+}
+
+outputs := c.Outputs() // map[string]any, keyed by address
+fmt.Println(outputs["output.url"])
+
+url, err := xcl.Find[types.Output](c, "output.url")
+if err != nil {
+	return err
+}
+fmt.Println(url.Value)
+```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+cfg.apply("./config")
+
+outputs = cfg.outputs()  # dict keyed by address
+print(outputs["output.url"])
+```
+
+  </div>
+</CodeTabs>
+
+A list output is read back as a Go `[]any` or a Python `list`, and a map
+output as a `map[string]any` or a `dict`. A sensitive part of an output keeps
+its protection when read back; see [Sensitive values](/sensitive-values/).
+
+## Next
+
+- [Modules](/language/modules/): group configuration into a directory with
+  its own variables and outputs.
+- [References](/language/references/): how `variable.region` and
+  `module.db.output.port` reach other blocks.
+- [Functions](/language/functions/): the functions a default or an output
+  value can call.
+
+</Prose>

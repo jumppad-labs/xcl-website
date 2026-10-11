@@ -7,6 +7,8 @@ import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
+import CodeTabs from "../components/CodeTabs.astro";
+import { pythonParityURL } from "../config/site";
 
 <Hero
   heading="Registries"
@@ -27,7 +29,12 @@ your own, start from the [plugin template](/plugin-template/).
 
 The `registry` package ships the local registry, which holds the Go types and
 plugins an application supplies itself. Create one with `registry.NewLocal`,
-register on it, and give it to the `Config`:
+register on it, and give it to the `Config`. In Python the local registry is
+`xcl.LocalRegistry`, and plugins are always external binaries: there is no
+in-process form.
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 local := registry.NewLocal()
@@ -45,6 +52,22 @@ if err != nil {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+local = xcl.LocalRegistry()
+local.register_type(Deployment)                            # a plain Python type
+local.register_external_plugin("./bin/xcl-plugin-docker")  # an external plugin binary
+local.register_plugin_directory("~/.xcl/plugins")          # a directory to search
+
+with xcl.Config(registries=[local], state_path="./.xcl") as cfg:
+    ...
+```
+
+  </div>
+</CodeTabs>
+
 Registering only records. None of the `Register` methods returns an error,
 and nothing is started, checked or searched until it is needed; see
 [How problems are reported](#how-problems-are-reported).
@@ -53,7 +76,11 @@ and nothing is started, checked or searched until it is needed; see
 
 `RegisterType` declares a Go type as a block type. The prototype is a pointer
 to a struct embedding `types.ResourceBase`, and the name is the block type with
-an optional subtype:
+an optional subtype. In Python the name is given by `@xcl.entity` on a
+dataclass subclassing `xcl.Resource`, and `register_type` takes the class:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 local := registry.NewLocal()
@@ -67,9 +94,44 @@ if err != nil {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+from dataclasses import dataclass
+import xcl
+
+@xcl.entity("deployment")            # deployment "api" {}
+@dataclass
+class Deployment(xcl.Resource):
+    image: str
+
+@xcl.entity("service")               # service "api" {}
+@dataclass
+class Service(xcl.Resource):
+    port: int = 80
+
+@xcl.entity("database", "postgres")  # database "postgres" "main" {}
+@dataclass
+class PostgreSQL(xcl.Resource):
+    location: str
+
+local = xcl.LocalRegistry()
+local.register_type(Deployment)
+local.register_type(Service)
+local.register_type(PostgreSQL)
+
+with xcl.Config(registries=[local]) as cfg:
+    ...
+```
+
+  </div>
+</CodeTabs>
+
 A declared type has no provider, so it is only ever decoded into. It still
 takes part in references, variables and modules, and is read back as your own
-Go type with `Find[T]`, `FindByType[T]` or `Decode`. Every type a
+Go type with `Find[T]`, `FindByType[T]` or `Decode`, or in Python as your own
+class with `cfg.find`, `cfg.find_by_type` or `cfg.all`. Every type a
 configuration uses must be declared, even the ones the program never reads.
 
 `NewConfig` reads the declared types of every registry once, when the
@@ -93,10 +155,24 @@ configuration uses must be declared, even the ones the program never reads.
 A directory is searched for files named `xcl-plugin-*` by default. Give
 another pattern, as `filepath.Match` takes it, when the registry is created:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 local := registry.NewLocal(registry.PluginPattern("acme-plugin-*"))
 local.RegisterPluginDirectory("/opt/acme/plugins")
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+local = xcl.LocalRegistry(plugin_pattern="acme-plugin-*")
+local.register_plugin_directory("/opt/acme/plugins")
+```
+
+  </div>
+</CodeTabs>
 
 The pattern is fixed when the registry is created, so a later registration
 can not change what an earlier one matches.
@@ -113,7 +189,12 @@ An application that only reads its configuration needs no plugins and no
 state. Declare its types on a local registry, and leave out
 `xcl.WithStatePath` and `xcl.WithStateStore`: nothing is persisted, the
 applied configuration is held in memory only, and every run reads the
-configuration afresh. This is a supported mode, not a fallback:
+configuration afresh. This is a supported mode, not a fallback. In Python,
+leave out `state_path` and `state_store`, and read the applied entities back
+with `cfg.all`, as `Decode` has no Python form:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 local := registry.NewLocal()
@@ -135,6 +216,24 @@ if err := c.Decode(&cfg); err != nil {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+local = xcl.LocalRegistry()
+local.register_type(Deployment)
+local.register_type(Service)
+
+with xcl.Config(registries=[local]) as cfg:
+    cfg.apply("./config")
+
+    deployments = cfg.all(Deployment)
+    services = cfg.all(Service)
+```
+
+  </div>
+</CodeTabs>
+
 The [configuration only example](/examples/configuration-only/) is a complete
 program built this way. Add a state option when a program needs to know, on
 its next run, what it applied on this one, as a program with providers does
@@ -145,7 +244,11 @@ to update and destroy what it created.
 `xcl.WithRegistry` can be given any number of times. Registries are read in
 the order they were given, and their plugins load in that order; within a
 registry, plugins load in the order they were registered, with each
-directory's plugins at the point the directory was registered:
+directory's plugins at the point the directory was registered. In Python the
+`registries` list is read in the same order:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 builtin := registry.NewLocal()
@@ -160,6 +263,24 @@ c, err := xcl.NewConfig(
 	xcl.WithRegistry(user),    // then this one
 )
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+builtin = xcl.LocalRegistry()
+builtin.register_external_plugin("./bin/xcl-plugin-template")  # plugins are external binaries from Python
+builtin.register_type(Settings)
+
+user = xcl.LocalRegistry()
+user.register_plugin_directory("~/.xcl/plugins")
+
+with xcl.Config(registries=[builtin, user]) as cfg:  # builtin is read and loaded first, then user
+    ...
+```
+
+  </div>
+</CodeTabs>
 
 Plugins load at the start of the first `Validate`, `Apply`, `Destroy`, `Diff`
 or `Load`, and only once per `Config`; later operations reuse them. The order
@@ -193,7 +314,11 @@ registry's types and returns an error when they do not fit together: the same
 block type declared twice, in one registry or across two, a type keyword used
 both with and without a subtype, or a builtin's name. A clash between
 registries comes from how they are combined, not from one bad line, so it is
-an error rather than a panic:
+an error rather than a panic. In Python, creating the `Config` raises
+`xcl.TypeNameClashError`:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 c, err := xcl.NewConfig(xcl.WithRegistry(local), xcl.WithRegistry(shared))
@@ -205,13 +330,31 @@ if errors.As(err, &clash) {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+try:
+    with xcl.Config(registries=[local, shared]) as cfg:
+        ...
+except xcl.TypeNameClashError as e:
+    print(e)
+```
+
+  </div>
+</CodeTabs>
+
 **A problem with plugins is an error from the first operation.** A plugin
 binary that is missing or broken, a plugin directory that can not be read, or
 a block type a plugin provides that something else already provides, depends
 on the machine or on what loads, so it is returned by the first `Validate`,
 `Apply`, `Destroy`, `Diff` or `Load`, the operation that loads plugins. Any
 plugin that fails to start fails the load, whether it was registered
-explicitly or found in a directory:
+explicitly or found in a directory. In Python the first operation raises
+`xcl.PluginLoadError`:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 err := c.Apply("./config")
@@ -221,6 +364,19 @@ if errors.As(err, &loadErr) {
 	fmt.Printf("plugin %q from registry %q: %s\n", loadErr.Plugin, loadErr.Registry, loadErr.Err)
 }
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+try:
+    cfg.apply("./config")
+except xcl.PluginLoadError as e:
+    print(e)
+```
+
+  </div>
+</CodeTabs>
 
 `*xcl.PluginLoadError` matches `xcl.ErrPluginLoad` with `errors.Is`. It names
 the `Plugin`, the `Registry` it came from, and the reason in `Err`. `Plugin` is
@@ -263,6 +419,9 @@ plugins can come from anywhere: a company plugin server, a cache filled on
 first use, or a fixed set built into a tool. The package defines the
 interfaces and the `Type` a registry declares:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="registry/registry.go"
 // Registry provides types and plugins to a Config. A Config uses every
 // registry given to it with xcl.WithRegistry, in that order.
@@ -304,6 +463,14 @@ type Plugin interface {
 }
 ```
 
+  </div>
+  <div slot="python">
+
+Writing your own registry is not yet available from Python. Python programs use `xcl.LocalRegistry` and `xcl.GitHubRegistry`; see the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
+
 `Types` is read once, by `NewConfig`, and a registry with no Go types returns
 nil. `Plugins` is called once per `Config`, when plugins load, with an `emit` a
 registry can report its own progress through, as the local registry reports
@@ -315,6 +482,9 @@ returns a `Plugin` for a plugin compiled into the program, and
 same two the local registry uses. As an illustration, here is a registry a
 tool might write for a fixed set of types and plugins it always ships with.
 It is not part of xcl:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="toolkit.go"
 // Toolkit provides the types and plugins every build of the tool ships with
@@ -340,6 +510,14 @@ func (t *Toolkit) Plugins(ctx context.Context, emit events.Emit) ([]registry.Plu
 	}, nil
 }
 ```
+
+  </div>
+  <div slot="python">
+
+Writing your own registry is not yet available from Python. Python programs use `xcl.LocalRegistry` and `xcl.GitHubRegistry`; see the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
 
 The types a registry returns from `Types` are checked by `NewConfig` like any
 declared with `RegisterType`, so a malformed one, or one that clashes, is an

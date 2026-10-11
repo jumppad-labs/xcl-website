@@ -7,6 +7,7 @@ import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
+import CodeTabs from "../components/CodeTabs.astro";
 
 <Hero
   heading="Installing plugins from GitHub"
@@ -21,9 +22,12 @@ repository and the release, and xcl does the rest when plugins load.
 
 ## Declaring a plugin
 
-Create a GitHub registry with `registry.NewGitHub`, register each plugin by
-repository and release tag, and give the registry to the `Config` like any
-other:
+Create a GitHub registry with `registry.NewGitHub`, or `xcl.GitHubRegistry` in
+Python, register each plugin by repository and release tag, and give the
+registry to the `Config` like any other:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 gh := registry.NewGitHub()
@@ -37,6 +41,25 @@ if err != nil {
 	return err
 }
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+github = xcl.GitHubRegistry()
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "v1.2.0")
+
+with xcl.Config(
+    registries=[
+        local,   # your own types and plugins
+        github,  # plugins from GitHub releases
+    ],
+) as cfg:
+    ...
+```
+
+  </div>
+</CodeTabs>
 
 Registering only records, as on the local registry. The plugin is named after
 the repository, here `xcl-plugin-docker`, and is installed, or found in the
@@ -53,12 +76,34 @@ checks for newer releases. A wrong declaration is a programmer error and
 panics at the `RegisterPlugin` line, naming the plugin, before anything is
 downloaded:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "latest") // panics
 gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "~1.2")   // panics
 gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "1.2.0")  // panics, the tag has a v
 gh.RegisterPlugin("xcl-plugin-docker", "v1.2.0")              // panics, not owner/repo
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "latest")  # fatal when the Config is created
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "~1.2")    # fatal
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "1.2.0")   # fatal, the tag has a v
+github.register_plugin("xcl-plugin-docker", "v1.2.0")               # fatal, not owner/repo
+```
+
+In Python, `register_plugin` only records the declaration. The same rule is
+applied when `xcl.Config` is created, before anything is downloaded, but not
+as a Python exception: the engine panics, the panic is not recovered, and the
+process exits with the message naming the plugin on standard error. Check a
+repository and version before declaring them when they come from input.
+
+  </div>
+</CodeTabs>
 
 Draft releases are never installed.
 
@@ -88,6 +133,9 @@ formats works too.
 Give the registry the public keys you trust, and a plugin is used only when
 its release's checksums file is signed by one of them:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 key, err := os.ReadFile("./keys/acme-plugins.asc")
 if err != nil {
@@ -97,6 +145,21 @@ if err != nil {
 gh := registry.NewGitHub(registry.GitHubTrustedKeys(string(key)))
 gh.RegisterPlugin("acme/xcl-plugin-billing", "v2.0.1")
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+from pathlib import Path
+
+key = Path("./keys/acme-plugins.asc").read_text()
+
+github = xcl.GitHubRegistry(trusted_keys=[key])
+github.register_plugin("acme/xcl-plugin-billing", "v2.0.1")
+```
+
+  </div>
+</CodeTabs>
 
 A release signed by another key, or not signed at all, is refused and nothing
 is kept. Signing the checksums file signs every archive through its checksum.
@@ -111,10 +174,26 @@ The registry uses the token given with `registry.GitHubToken`, otherwise the
 `GITHUB_TOKEN` environment variable, then `GH_TOKEN`, and sends it with every
 request:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 gh := registry.NewGitHub(registry.GitHubToken(os.Getenv("ACME_PLUGINS_TOKEN")))
 gh.RegisterPlugin("acme/xcl-plugin-billing", "v2.0.1")
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+import os
+
+github = xcl.GitHubRegistry(token=os.environ["ACME_PLUGINS_TOKEN"])
+github.register_plugin("acme/xcl-plugin-billing", "v2.0.1")
+```
+
+  </div>
+</CodeTabs>
 
 Public repositories need no token. GitHub answers a request for a private
 repository without a token as if it did not exist, so without one the error
@@ -136,9 +215,22 @@ Installed plugins are kept under the xcl home directory, in
 Choose another location with `registry.GitHubCacheDir`, for example a
 directory inside your project or a CI cache:
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 gh := registry.NewGitHub(registry.GitHubCacheDir("./.xcl/plugins"))
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+github = xcl.GitHubRegistry(cache_dir="./.xcl/plugins")
+```
+
+  </div>
+</CodeTabs>
 
 - **Offline.** A version already in the cache is used without contacting
   GitHub, so applies work with no network access.
@@ -164,6 +256,9 @@ wraps a `*xcl.PluginInstallError`, which names the `Repository`, `Version` and
 - `xcl.ErrPluginVerification`: the release has no checksums file, a file does
   not match its checksum, or a signature is missing or not from a trusted key.
 
+<CodeTabs>
+  <div slot="go">
+
 ```go title="main.go"
 err := c.Apply("./config")
 
@@ -176,6 +271,26 @@ if errors.Is(err, xcl.ErrPluginVerification) {
 	log.Print("refusing a plugin that did not verify")
 }
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+try:
+    cfg.apply("./config")
+except xcl.PluginVerificationError:
+    print("refusing a plugin that did not verify")
+except xcl.PluginNotFoundError as err:
+    details = err.details
+    print(f"cannot install {details['repository']} {details['version']} for {details['platform']}")
+```
+
+In Python, the failed operation raises `xcl.PluginNotFoundError` or
+`xcl.PluginVerificationError`, and `err.details` carries the `repository`,
+`version` and `platform`.
+
+  </div>
+</CodeTabs>
 
 </Prose>
 
