@@ -151,7 +151,7 @@ fmt.Println(db.Location, db.Port)
 
   <FeatureCard icon="🎛️" title="Variables and outputs">
     `variable` blocks take defaults that can be overridden from Go with
-    `WithVariables`, or from the environment with `HCL_VAR_<name>`. `output`
+    `WithVariables`, or from the environment with `XCL_VAR_<name>`. `output`
     blocks expose values, including lists and maps. In Go an output is an
     entity like any other: `Find[types.Output]` returns it, and `.Value`
     holds what it publishes.
@@ -166,9 +166,11 @@ fmt.Println(db.Location, db.Port)
   </FeatureCard>
 
   <FeatureCard icon="ƒ" title="Functions">
-    Around sixty built in: the HCL standard library (`format`, `join`,
-    `jsonencode`, `merge`, `regex` and more) plus `env`, `file`,
-    `template_file`, `home`, `dir`, `len` and `element`.
+    57 built in: the HCL standard library (`format`, `join`, `jsonencode`,
+    `merge`, `regex` and more) plus `env`, `file`, `template_file`, `home`,
+    `dir`, `len` and `element`. And your own: register a Go function with
+    the application, or offer one from a plugin, and configuration calls it
+    by name like any builtin.
   </FeatureCard>
 
   <FeatureCard icon="🔌" title="Plugins and providers">
