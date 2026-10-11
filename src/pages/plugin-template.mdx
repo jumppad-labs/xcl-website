@@ -65,7 +65,9 @@ notes "note" "greeting" {
 
 Every source file lists its exported types and functions first and its
 helpers last, and a provider's methods follow the lifecycle: `Init`,
-`Create`, `Read`, `Changed`, `Update`, `Destroy`, `Functions`. The full
+`Create`, `Read`, `Changed`, `Update`, `Destroy`, `Functions`. `Functions`
+returns the functions the provider offers to configuration, which calls
+them by name like any builtin, or nil when it offers none. The full
 write-up is the
 [plugin layout guide](https://github.com/jumppad-labs/xcl/blob/main/docs/plugin-layout.md).
 
