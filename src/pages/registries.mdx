@@ -439,17 +439,17 @@ never silently change which provider a configuration gets.
 
 ## Writing your own registry
 
-A registry is anything that implements `registry.Registry`, so types and
-plugins can come from anywhere: a company plugin server, a cache filled on
-first use, or a fixed set built into a tool. The package defines the
+A registry is anything that implements `registry.Registry`, so types,
+functions and plugins can come from anywhere: a company plugin server, a cache
+filled on first use, or a fixed set built into a tool. The package defines the
 interfaces and the `Type` a registry declares:
 
 <CodeTabs>
   <div slot="go">
 
 ```go title="registry/registry.go"
-// Registry provides types and plugins to a Config. A Config uses every
-// registry given to it with xcl.WithRegistry, in that order.
+// Registry provides types, functions and plugins to a Config. A Config uses
+// every registry given to it with xcl.WithRegistry, in that order.
 type Registry interface {
 	// Name identifies the registry in events and errors, i.e. "local" or
 	// "registry.xcl.dev"
@@ -458,6 +458,12 @@ type Registry interface {
 	// Types returns the plain Go types this registry declares. It is read
 	// once, by NewConfig. A registry with no Go types returns nil.
 	Types() []Type
+
+	// Functions returns the Go functions this registry offers to
+	// configuration. It is read once, by NewConfig, which reports a function
+	// named like a builtin or like another application function. A registry
+	// with no functions returns nil.
+	Functions() []Function
 
 	// Plugins returns the plugins this registry provides, fetching them first
 	// if it needs to. It is called once per Config, when plugins load.
