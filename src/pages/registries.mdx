@@ -38,7 +38,7 @@ in-process form.
 
 ```go title="main.go"
 local := registry.NewLocal()
-local.RegisterType(&Deployment{}, "deployment")         // a plain Go type
+registry.Register[Deployment](local, "deployment")      // a plain Go type
 local.RegisterPlugin(&template.TemplatePlugin{})        // an in-process plugin
 local.RegisterExternalPlugin("./bin/xcl-plugin-docker") // an external plugin binary
 local.RegisterPluginDirectory("~/.xcl/plugins")         // a directory to search
@@ -68,25 +68,37 @@ with xcl.Config(registries=[local], state_path="./.xcl") as cfg:
   </div>
 </CodeTabs>
 
-Registering only records. None of the `Register` methods returns an error,
+Registering only records. None of the `Register` calls returns an error,
 and nothing is started, checked or searched until it is needed; see
 [How problems are reported](#how-problems-are-reported).
 
 ### Declaring types
 
-`RegisterType` declares a Go type as a block type. The prototype is a pointer
-to a struct embedding `types.ResourceBase`, and the name is the block type with
-an optional subtype. In Python the name is given by `@xcl.entity` on a
+`registry.Register[T]` declares the Go type `T` as a block type on a
+registry, under a name made of the block type and an optional subtype. `T` is
+a plain struct of the application's own, or a struct embedding
+`types.ResourceBase` as a plugin's types do. It works on every supported Go
+version; on Go 1.27 the same is also a method, `local.Register[T]("deployment")`,
+and `RegisterType(&T{}, ...)` takes a pointer to a value instead, for a type
+only known at run time. In Python the name is given by `@xcl.entity` on a
 dataclass subclassing `xcl.Resource`, and `register_type` takes the class:
 
 <CodeTabs>
   <div slot="go">
 
 ```go title="main.go"
+type PostgreSQL struct {
+	Meta types.Meta // the block's id, file and line, filled by xcl
+
+	Engine   string `xcl:"engine,label"` // the subtype, "postgres"
+	Name     string `xcl:"name,label"`   // the block's name, "main"
+	Location string `xcl:"location"`
+}
+
 local := registry.NewLocal()
-local.RegisterType(&Deployment{}, "deployment")           // deployment "api" {}
-local.RegisterType(&Service{}, "service")                 // service "api" {}
-local.RegisterType(&PostgreSQL{}, "database", "postgres") // database "postgres" "main" {}
+registry.Register[Deployment](local, "deployment")           // deployment "api" {}
+registry.Register[Service](local, "service")                 // service "api" {}
+registry.Register[PostgreSQL](local, "database", "postgres") // database "postgres" "main" {}
 
 c, err := xcl.NewConfig(xcl.WithRegistry(local))
 if err != nil {
@@ -127,6 +139,14 @@ with xcl.Config(registries=[local]) as cfg:
 
   </div>
 </CodeTabs>
+
+A plain struct needs no xcl type of its own. A field called `Meta`, which must
+be a `types.Meta` with no tag, receives a copy of the block's metadata. Fields
+tagged as labels are filled from the block's labels, the subtype and the name
+for a type with a subtype, or the name alone for one without, and are read in
+expressions like an attribute, such as `database.postgres.main.name`;
+configuration cannot set them. A field tagged `disabled` (a `bool`) or
+`depends_on` (a `[]string`) receives the values every block has.
 
 A declared type has no provider, so it is only ever decoded into. It still
 takes part in references, variables and modules, and is read back as your own
@@ -198,8 +218,8 @@ with `cfg.all`, as `Decode` has no Python form:
 
 ```go title="main.go"
 local := registry.NewLocal()
-local.RegisterType(&Deployment{}, "deployment")
-local.RegisterType(&Service{}, "service")
+registry.Register[Deployment](local, "deployment")
+registry.Register[Service](local, "service")
 
 c, err := xcl.NewConfig(xcl.WithRegistry(local))
 if err != nil {
@@ -253,7 +273,7 @@ directory's plugins at the point the directory was registered. In Python the
 ```go title="main.go"
 builtin := registry.NewLocal()
 builtin.RegisterPlugin(&template.TemplatePlugin{})
-builtin.RegisterType(&Settings{}, "settings")
+registry.Register[Settings](builtin, "settings")
 
 user := registry.NewLocal()
 user.RegisterPluginDirectory("~/.xcl/plugins")
@@ -303,10 +323,15 @@ loading happen in, each problem is reported in the same place.
 
 **A mistake in a single call panics at that call.** It is wrong on every run,
 so there is nothing for a caller to handle, and the stack trace points at the
-bad line. `RegisterType` panics, naming the type, for an empty name, more than
-one subtype, an empty subtype, or a prototype that is not a pointer to a
-struct embedding `types.ResourceBase`. `RegisterPlugin` panics for a nil
-plugin, and `WithRegistry` for a nil registry.
+bad line. `Register` and `RegisterType` panic, naming the type, for an empty
+name, more than one subtype, an empty subtype, a prototype that is not a
+pointer to a struct, or a plain struct xcl cannot lay out: one declaring an
+attribute called `meta`, a `Meta` field that is not a `types.Meta` or a
+`types.Meta` under another name, a `disabled` or `depends_on` field of the
+wrong type, or label fields that are not strings or do not match the block's
+labels. `Register` also panics for a `T` that is not a struct.
+`RegisterPlugin` panics for a nil plugin, and `WithRegistry` for a nil
+registry.
 
 **A clash between declared types is an error from `NewConfig`.** Declared Go
 types are known without loading anything, so `NewConfig` reads every
@@ -414,17 +439,17 @@ never silently change which provider a configuration gets.
 
 ## Writing your own registry
 
-A registry is anything that implements `registry.Registry`, so types and
-plugins can come from anywhere: a company plugin server, a cache filled on
-first use, or a fixed set built into a tool. The package defines the
+A registry is anything that implements `registry.Registry`, so types,
+functions and plugins can come from anywhere: a company plugin server, a cache
+filled on first use, or a fixed set built into a tool. The package defines the
 interfaces and the `Type` a registry declares:
 
 <CodeTabs>
   <div slot="go">
 
 ```go title="registry/registry.go"
-// Registry provides types and plugins to a Config. A Config uses every
-// registry given to it with xcl.WithRegistry, in that order.
+// Registry provides types, functions and plugins to a Config. A Config uses
+// every registry given to it with xcl.WithRegistry, in that order.
 type Registry interface {
 	// Name identifies the registry in events and errors, i.e. "local" or
 	// "registry.xcl.dev"
@@ -433,6 +458,12 @@ type Registry interface {
 	// Types returns the plain Go types this registry declares. It is read
 	// once, by NewConfig. A registry with no Go types returns nil.
 	Types() []Type
+
+	// Functions returns the Go functions this registry offers to
+	// configuration. It is read once, by NewConfig, which reports a function
+	// named like a builtin or like another application function. A registry
+	// with no functions returns nil.
+	Functions() []Function
 
 	// Plugins returns the plugins this registry provides, fetching them first
 	// if it needs to. It is called once per Config, when plugins load.
@@ -448,8 +479,8 @@ type Type struct {
 	// Subtype is the subtype, empty for a type declared without one
 	Subtype string
 
-	// Prototype is a pointer to a struct embedding types.ResourceBase, blocks
-	// of the type are decoded into new values of its Go type
+	// Prototype is a pointer to a struct, embedding types.ResourceBase or
+	// plain, blocks of the type are decoded into new values of its Go type
 	Prototype any
 }
 
@@ -520,7 +551,7 @@ Writing your own registry is not yet available from Python. Python programs use 
 </CodeTabs>
 
 The types a registry returns from `Types` are checked by `NewConfig` like any
-declared with `RegisterType`, so a malformed one, or one that clashes, is an
+declared with `Register`, so a malformed one, or one that clashes, is an
 error from `NewConfig`. An error from `Plugins` fails the load as a
 `*xcl.PluginLoadError` with an empty `Plugin`, and an error from a plugin's
 `Start` as one naming that plugin. The registry's `Name` is what events and

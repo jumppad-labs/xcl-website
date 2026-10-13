@@ -67,7 +67,7 @@ here overrides every other source:
 
 ```go title="main.go"
 local := registry.NewLocal()
-local.RegisterType(&App{}, "app")
+registry.Register[App](local, "app")
 
 c, err := xcl.NewConfig(
 	xcl.WithRegistry(local),
@@ -103,7 +103,9 @@ A `.vars` file holds attributes only, one per variable, and no blocks. Every
 file ending in `.vars` in the directory of each path given to an operation is
 read; a path that is a file is read from its own directory. The search is not
 recursive, and there is no option to name a `.vars` file: a file is read
-because of where it is.
+because of where it is. A `.vars` file that is not well formed fails the
+operation, reported like any other
+[problem in configuration](/problems/).
 
 ## Environment variables
 

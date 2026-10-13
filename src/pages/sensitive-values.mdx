@@ -40,7 +40,7 @@ field is annotated `xcl.Sensitive[T]`:
 // one through a secret_key_ref naming the secret and the key, which are plain
 // strings, so the deployment never becomes sensitive itself.
 type Secret struct {
-	types.ResourceBase `xcl:",remain"`
+	Meta types.Meta
 
 	Data types.Sensitive[map[string]string] `xcl:"data" json:"data"`
 }
@@ -219,7 +219,8 @@ knowing that it is then unprotected.
 - **The entity printer**, `logger.ResourcePrinter`, shows the marker in every
   format. `logger.WithRevealSensitive(true)` shows real values.
 - **Diffs** from `Config.Diff` report that a sensitive value changed without
-  either value, and `diff.Render` shows `(sensitive value)`. Pass
+  either value, and its rendered text, `Diff.Pieces`, shows
+  `(sensitive value)`. Pass
   `diff.RevealSensitive()` to include both values. See [Diffs](/diff/).
 
 A value read back from event data has no real value to show, so it is written

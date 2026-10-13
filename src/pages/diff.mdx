@@ -33,7 +33,7 @@ cases, such as a configuration that does not parse or validate:
   <div slot="go">
 
 ```go title="main.go"
-import "github.com/jumppad-labs/xcl/diff"
+import "github.com/jumppad-labs/xcl/highlight"
 
 d, err := c.Diff([]string{"./config"})
 if err != nil {
@@ -45,7 +45,7 @@ if d.Changed() == 0 {
 	return nil
 }
 
-fmt.Print(string(diff.Render(d)))
+os.Stdout.Write(highlight.Text.Render(d.Pieces()))
 ```
 
   </div>
@@ -64,7 +64,7 @@ for resource in d.resources:
     print(resource.address, resource.action)
 ```
 
-The rendered text form, `diff.Render`, is not yet available from Python, so a Python program prints the summary counts and the entities itself; see the <a href={pythonParityURL}>parity list</a>.
+The rendered text form, `d.Pieces()`, is not yet available from Python, so a Python program prints the summary counts and the entities itself; see the <a href={pythonParityURL}>parity list</a>.
 
   </div>
 </CodeTabs>
@@ -194,8 +194,9 @@ See [Sensitive values](/sensitive-values/) for marking a field sensitive.
 
 ## Reading the rendered output
 
-`diff.Render` turns a result into text in the style of a git diff, ready to
-print or log. This result has an entity for each action, and a replacement
+`d.Pieces()` lays a result out as text in the style of a git diff, and
+`highlight.Text.Render(d.Pieces())` gives that text plain, ready to print or
+log. This result has an entity for each action, and a replacement
 for each reason:
 
 ```text
@@ -269,8 +270,8 @@ Diff: no changes, 9 unchanged.
 
 ## Colour
 
-The rendering is plain text with no colour codes unless you ask for colour.
-Pass `diff.Highlight` the same renderer you use to
+The pieces are labelled, so colour is only a matter of the renderer. Render
+them with the same renderer you use to
 [highlight configuration text](/configuration-text/#highlighting):
 
 <CodeTabs>
@@ -279,12 +280,7 @@ Pass `diff.Highlight` the same renderer you use to
 ```go
 import "github.com/jumppad-labs/xcl/highlight"
 
-renderer, err := highlight.NewANSIRenderer()
-if err != nil {
-	return err
-}
-
-fmt.Print(string(diff.Render(d, diff.Highlight(renderer))))
+os.Stdout.Write(highlight.ANSI.Render(d.Pieces()))
 ```
 
   </div>
@@ -299,7 +295,7 @@ Added lines use the theme's inserted colour, removed ones its deleted colour,
 and changed and replaced ones its changed colour. Block headers and values are
 coloured as configuration. With no theme, the terminal renderer uses the
 terminal's standard green, red and yellow. Given a VS Code colour theme with
-`highlight.WithThemeFile`, it uses the colours that theme gives diffs. A theme
+`highlight.NewANSI(highlight.WithThemeFile(...))`, it uses the colours that theme gives diffs. A theme
 that sets no diff colours leaves the markers in the terminal's default colour.
 
 xcl never checks whether output is a terminal, so whether to ask for colour is
@@ -309,8 +305,9 @@ rendering, and sensitive values are hidden the same way in both.
 A renderer of your own sees the markers and paths labelled
 `highlight.ScopeInserted`, `highlight.ScopeDeleted` and
 `highlight.ScopeChanged`, comment lines labelled as comments, and headers and
-values labelled as configuration text. Every other piece is passed with an
-empty scope, so a renderer that escapes text sees every byte.
+values labelled as configuration text. Every other piece, such as
+indentation, placeholders and the summary line, has an empty scope, so a
+renderer that escapes text sees every byte.
 
 ## The JSON form
 

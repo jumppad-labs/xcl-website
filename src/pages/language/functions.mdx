@@ -241,7 +241,7 @@ result:
 
 ```go title="main.go"
 local := registry.NewLocal()
-local.RegisterType(&App{}, "app")
+registry.Register[App](local, "app")
 local.RegisterFunction("slugify", func(title string) (string, error) {
 	return strings.ToLower(strings.ReplaceAll(title, " ", "-")), nil
 })

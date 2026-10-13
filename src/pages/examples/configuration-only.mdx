@@ -21,9 +21,9 @@ outside world, the application wants the values, with references, variables
 and modules resolved, as ordinary Go structs, and then acts on them.
 
 That is what this example is: a small program that reads its configuration
-into its own types and uses it. The block types are plain Go types declared
-with `RegisterType` on a local registry, which is given to the Config when it
-is created. xcl decodes each block into your type, resolves every reference in
+into its own types and uses it. The block types are plain Go structs declared
+with `registry.Register` on a local registry, which is given to the Config
+when it is created. xcl decodes each block into your type, resolves every reference in
 dependency order, and never calls a provider. A declared type needs nothing
 else: no plugin, no provider, no schema to write by hand. Nothing is kept between runs either:
 without a state option xcl holds the applied configuration in memory only,
@@ -42,10 +42,11 @@ comparison.
 
 ## The Go types
 
-A block type is a struct embedding `types.ResourceBase`, which carries the
-common block metadata and the `depends_on` and `disabled` attributes.
-Anything nested inside a block is a plain struct: a block that appears once
-is a pointer, a block that repeats is a slice. The secret's data is a
+A block type is a plain Go struct. The `xcl` tags map configuration to
+fields, and a field called `Meta`, a `types.Meta`, is filled with the block's
+metadata, such as its id, which the program uses to say which block it means.
+Anything nested inside a block is a struct too, one that is not registered: a
+block that appears once is a pointer, a block that repeats is a slice. The secret's data is a
 [sensitive value](/sensitive-values/), so it is masked in output and events,
 and would be encrypted in state by a program that kept any.
 
@@ -58,7 +59,7 @@ and would be encrypted in state by a program that kept any.
 // ahead of time, and a single value can be read from it with
 // `config_map.api.data.db_host`.
 type ConfigMap struct {
-	types.ResourceBase `xcl:",remain"`
+	Meta types.Meta
 
 	Data map[string]string `xcl:"data" json:"data"`
 }
@@ -71,7 +72,7 @@ type ConfigMap struct {
 // one through a secret_key_ref naming the secret and the key, which are plain
 // strings, so the deployment never becomes sensitive itself.
 type Secret struct {
-	types.ResourceBase `xcl:",remain"`
+	Meta types.Meta
 
 	Data types.Sensitive[map[string]string] `xcl:"data" json:"data"`
 }
@@ -79,7 +80,7 @@ type Secret struct {
 // Deployment defines the block type `deployment`. It holds repeated container
 // blocks, each of which nests further blocks of its own.
 type Deployment struct {
-	types.ResourceBase `xcl:",remain"`
+	Meta types.Meta
 
 	Replicas int `xcl:"replicas,optional" json:"replicas,omitempty"`
 
@@ -93,9 +94,9 @@ type Deployment struct {
 }
 
 // Container is the nested `container` block of a deployment. It is not a
-// resource of its own, so it does not embed types.ResourceBase and can not be
-// referenced by its own id, its fields are reached through the deployment
-// that holds it, i.e.
+// resource of its own: it is not registered as a block type, so it has no
+// metadata and can not be referenced by its own id. Its fields are reached
+// through the deployment that holds it, i.e.
 // `deployment.api.container[0].port[0].container_port`.
 type Container struct {
 	Name  string `xcl:"name" json:"name"`
@@ -260,7 +261,7 @@ not drift apart.
 // does, so the service names the deployment by its id and reads the port out
 // of it, and the two can not drift apart.
 type Service struct {
-	types.ResourceBase `xcl:",remain"`
+	Meta types.Meta
 
 	Deployment string `xcl:"deployment" json:"deployment"`
 	Port       int    `xcl:"port" json:"port"`
@@ -269,7 +270,7 @@ type Service struct {
 
 // Ingress defines the block type `ingress`, it routes a host to a service
 type Ingress struct {
-	types.ResourceBase `xcl:",remain"`
+	Meta types.Meta
 
 	Host  string `xcl:"host" json:"host"`
 	Rules []Rule `xcl:"rule,block" json:"rule"`
@@ -513,11 +514,11 @@ func loadConfig(dir string, options ...xcl.ConfigOption) (*appConfig, error) {
 	// declares must be declared here, even the ones the program does not
 	// read.
 	local := registry.NewLocal()
-	local.RegisterType(&resources.ConfigMap{}, "config_map")
-	local.RegisterType(&resources.Secret{}, "secret")
-	local.RegisterType(&resources.Deployment{}, "deployment")
-	local.RegisterType(&resources.Service{}, "service")
-	local.RegisterType(&resources.Ingress{}, "ingress")
+	registry.Register[resources.ConfigMap](local, "config_map")
+	registry.Register[resources.Secret](local, "secret")
+	registry.Register[resources.Deployment](local, "deployment")
+	registry.Register[resources.Service](local, "service")
+	registry.Register[resources.Ingress](local, "ingress")
 
 	c, err := xcl.NewConfig(append([]xcl.ConfigOption{xcl.WithRegistry(local)}, options...)...)
 	if err != nil {

@@ -64,8 +64,8 @@ with xcl.Config(
 Registering only records, as on the local registry. The plugin is named after
 the repository, here `xcl-plugin-docker`, and is installed, or found in the
 cache, at the start of the first `Validate`, `Apply`, `Destroy`, `Diff` or
-`Load`. A GitHub registry wraps a local registry, so `RegisterType` works on
-it too, and it loads in the order it was given beside any other registry.
+`Load`. A GitHub registry wraps a local registry, so `registry.Register` and
+`RegisterType` work on it too, and it loads in the order it was given beside any other registry.
 
 ## Pinning a version
 

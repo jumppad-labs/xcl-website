@@ -288,8 +288,9 @@ print(db.location, db.port)
   </FeatureCard>
 
   <FeatureCard icon="📝" title="Configuration only">
-    Not everything needs a lifecycle. `RegisterType` declares a plain Go type
-    as a block type on a local registry, with no plugin and no state needed.
+    Not everything needs a lifecycle. `registry.Register` declares a plain Go
+    struct as a block type on a local registry, with no plugin and no state
+    needed.
     It still takes part in references and modules, and no provider is ever
     called.
   </FeatureCard>

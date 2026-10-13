@@ -400,8 +400,9 @@ line reporting it. The event itself returns that entity, as the Go type
 registered for its block type, with `Event.Entity()`, and the receiver turns
 it back into configuration text with `xcl.EncodeEntity`, so it needs nothing
 from the application but event data at `xcl.EventDataProcessed`. When its
-writer shows colour it asks xcl to colour that configuration with
-`xcl.Highlight`, so the example has no highlighting code of its own. See
+writer shows colour it has xcl colour that configuration, rendering its
+`highlight.Pieces` with the terminal renderer `highlight.ANSI`, so the example
+has no highlighting code of its own. See
 [Configuration text](/configuration-text/#highlighting).
 
 Every example sets it up in one line, writing to standard error at the level

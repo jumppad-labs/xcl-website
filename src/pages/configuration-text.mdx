@@ -263,16 +263,16 @@ is applied again.
 
 ## Highlighting
 
-Configuration text is plain unless you ask for highlighting. Pass
-`xcl.Highlight` a renderer and every token of the text is handed to it,
-labelled with the same name the xcl VS Code extension gives it, so the
-configuration in your terminal or your page looks the way it does in the
-editor. Highlighting combines with every other option, including
+Configuration text is always plain. Highlighting it is a second step:
+`highlight.Pieces` splits the text into pieces, each labelled with the same
+name the xcl VS Code extension gives it, and a renderer turns the pieces into
+output, so the configuration in your terminal or your page looks the way it
+does in the editor. It works on the text every option produces, including
 `xcl.ShowReferences()`, whose references are coloured like any other text.
 
 ### In a terminal
 
-xcl ships a terminal renderer in the `highlight` package. With no theme it
+xcl ships a terminal renderer in the `highlight` package, `highlight.ANSI`. It
 uses only the terminal's 16 standard colours, so the result follows the
 user's own palette:
 
@@ -282,12 +282,12 @@ user's own palette:
 ```go
 import "github.com/jumppad-labs/xcl/highlight"
 
-renderer, err := highlight.NewANSIRenderer()
+text, err := xcl.EncodeEntity(entity)
 if err != nil {
 	return err
 }
 
-text, err := xcl.EncodeEntity(entity, xcl.Highlight(renderer))
+os.Stdout.Write(highlight.ANSI.Render(highlight.Pieces(text)))
 ```
 
   </div>
@@ -303,19 +303,19 @@ print(cfg.encode_saved_entity(event.data, highlight=True))
 </CodeTabs>
 
 xcl never checks whether output is a terminal. Whether to colour is your
-decision, so ask for highlighting only when the output shows colour, for
-example:
+decision, so colour only when the output shows colour, and render with
+`highlight.Text`, which gives back the plain text, otherwise:
 
 <CodeTabs>
   <div slot="go">
 
 ```go
-options := []xcl.EncodeOption{xcl.IncludeComputed()}
+var renderer highlight.Renderer = highlight.Text
 if isTerminal(os.Stdout) {
-	options = append(options, xcl.Highlight(renderer))
+	renderer = highlight.ANSI
 }
 
-text, err := xcl.EncodeEntity(entity, options...)
+os.Stdout.Write(renderer.Render(highlight.Pieces(text)))
 ```
 
   </div>
@@ -347,7 +347,7 @@ underline and strikethrough styles the theme sets:
   <div slot="go">
 
 ```go
-renderer, err := highlight.NewANSIRenderer(highlight.WithThemeFile("dark-plus.json"))
+renderer, err := highlight.NewANSI(highlight.WithThemeFile("dark-plus.json"))
 if errors.Is(err, xcl.ErrInvalidTheme) {
 	var detail *xcl.InvalidThemeError
 	errors.As(err, &detail)
@@ -374,30 +374,32 @@ way, since it does not hold its own `tokenColors`.
 
 ### Writing a renderer
 
-A renderer has one method, `Render(scope, text string) string`, and
-`highlight.RendererFunc` turns a plain function into one. It is called for
-every piece of the text, in order, and what it returns is joined together.
-`scope` is the TextMate scope the xcl-vscode grammar gives the piece, such as
-`storage.type.xcl` for a block type or `variable.other.property.xcl` for an
-attribute name. Text the grammar leaves unlabelled, such as whitespace, braces
-and commas, is passed too, with an empty scope, so a renderer for a format that
-needs escaping sees every byte:
+A renderer has one method, `Render(pieces []highlight.Piece) []byte`, and is
+given every piece of the text at once, in order, so it can reason across
+them, such as by line. Each `highlight.Piece` has a `Scope`, the TextMate
+scope the xcl-vscode grammar gives it, such as `storage.type.xcl` for a block
+type or `variable.other.property.xcl` for an attribute name, and its `Text`.
+Text the grammar leaves unlabelled, such as whitespace, braces and commas, is a
+piece too, with an empty scope, so a renderer for a format that needs escaping
+sees every byte. `highlight.RendererFunc` turns a function over all the pieces
+into a renderer, and `highlight.PieceFunc` one that styles each piece on its
+own, joining what it returns:
 
 <CodeTabs>
   <div slot="go">
 
 ```go
-renderer := highlight.RendererFunc(func(scope, text string) string {
-	text = html.EscapeString(text)
-	if scope == "" {
+renderer := highlight.PieceFunc(func(piece highlight.Piece) string {
+	text := html.EscapeString(piece.Text)
+	if piece.Scope == "" {
 		return text
 	}
 
-	class := strings.ReplaceAll(strings.TrimSuffix(scope, ".xcl"), ".", "-")
+	class := strings.ReplaceAll(strings.TrimSuffix(piece.Scope, ".xcl"), ".", "-")
 	return `<span class="` + class + `">` + text + `</span>`
 })
 
-text, err := xcl.EncodeEntity(entity, xcl.Highlight(renderer))
+page := renderer.Render(highlight.Pieces(text))
 ```
 
   </div>
@@ -411,8 +413,8 @@ Writing a renderer is not yet available from Python; `cfg.encode_saved_entity` o
 Every scope is exported as a string constant named `highlight.Scope...`, such as
 `highlight.ScopeAttribute` and `highlight.ScopeReference`, so a renderer can
 compare against them, or match a family by prefix, such as every scope
-starting with `comment.`. `highlight.Text(text, renderer)` highlights
-configuration text you already hold, without encoding an entity.
+starting with `comment.`. `highlight.Pieces` labels any configuration text you
+already hold, not only text encoded from an entity.
 
 ## For reading, not reprocessing
 

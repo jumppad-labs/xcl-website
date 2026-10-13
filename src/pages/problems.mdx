@@ -1,0 +1,137 @@
+---
+layout: ../layouts/Shell.astro
+title: "Problems in configuration - xcl"
+description: "How xcl reports what is wrong with a configuration: every problem at once, each with its file, line, block, field and the source around it, ready to show to the person who wrote it."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+import CodeTabs from "../components/CodeTabs.astro";
+import { pythonParityURL } from "../config/site";
+
+<Hero
+  heading="Problems in configuration"
+  sub="Every problem in a configuration at once, each with where it is, the block and field it is in, and the source around it."
+/>
+
+<Prose>
+
+A configuration with mistakes in it fails the operation that reads it, and the
+error holds every problem found, not only the first. In Go it is an
+`*errors.ConfigError` from the `github.com/jumppad-labs/xcl/errors` package; in
+Python, `Config` operations raise `xcl.ConfigError`.
+
+Take a block with a misspelled attribute:
+
+```hcl title="main.xcl"
+agent "claude" {
+  modls = ["opus"]
+}
+```
+
+## One problem, one diagnostic
+
+Each problem in the configuration text is a diagnostic. It says how serious the
+problem is, what it is and why, and where: the file and the exact range at
+fault, the block it is in, as an id such as `agent.claude`, and the field
+within that block, as a path such as `modls` or `workspace[0].directory`. It
+also keeps the lines of source around the fault, read when the problem was
+found, so showing them never opens the file again.
+
+Syntax errors, attributes and blocks the schema does not allow, values of the
+wrong type and a `.vars` file that is not well formed are all reported this
+way, one diagnostic per problem.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="main.go"
+import (
+	"errors"
+
+	xclerrors "github.com/jumppad-labs/xcl/errors"
+)
+
+err := c.Validate("./config")
+
+var cfgErr *xclerrors.ConfigError
+if errors.As(err, &cfgErr) {
+	for _, d := range cfgErr.Diagnostics() {
+		fmt.Println(d.Entity, d.Field, d.Summary)
+	}
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+try:
+    cfg.validate("./config")
+except xcl.ConfigError as err:
+    for problem in err.problems:
+        print(problem.file, problem.line, problem.entity, problem.field, problem.message)
+```
+
+  </div>
+</CodeTabs>
+
+In Go, `xclerrors.Diagnostic` embeds the `hcl.Diagnostic` it was made from, so
+`Severity`, `Summary`, `Detail`, `Subject` and `Context` are all there, and adds
+`Entity`, `Field`, `EntityPos`, where the block starts, and `Source`, the lines
+around the fault. `Diagnostics()` returns the diagnostics among the
+`ConfigError`'s errors, in the order they were found; `Errors` holds them all,
+along with any problem that is not about the configuration text. A
+diagnostic's `Error` is a single line, made for logs:
+
+```text
+main.xcl:2,3-8: Unsupported argument; An argument named "modls" is not expected here. (agent.claude, modls)
+```
+
+In Python each problem has `file`, `line`, `column` and `message`, plus
+`detail`, the why on its own, and `entity` and `field` when the engine knows
+them.
+
+## Showing problems to a person
+
+`xcl.DiagnosticPieces` lays diagnostics out as a report: the severity and
+summary, where the problem is, the source around it and the detail. It returns
+labelled pieces, the same as configuration text does, so any renderer from
+[Highlighting](/configuration-text/#highlighting) can print it:
+`highlight.Text` for plain text, `highlight.ANSI` for a terminal, or a renderer
+of your own.
+
+```go title="main.go"
+report := xcl.DiagnosticPieces(cfgErr.Diagnostics(), 80)
+os.Stderr.Write(highlight.ANSI.Render(report))
+```
+
+```text
+Error: Unsupported argument
+
+  on main.xcl line 2, in agent.claude, field modls:
+     2 |   modls = ["opus"]
+
+An argument named "modls" is not expected here.
+```
+
+The severity, and the source at fault, are labelled `highlight.ScopeError` or
+`highlight.ScopeWarning`; the rest of the source is labelled as configuration,
+so a terminal shows it coloured as it is in the editor. The second argument
+wraps the detail at that many columns, and 0 leaves it unwrapped. Source lines
+are never wrapped.
+
+The report is not yet available from Python, where each problem prints as its
+file, line, column and message. See the <a href={pythonParityURL}>parity list</a>
+for what the package offers.
+
+</Prose>
+
+<CtaBanner
+  heading="Colour it your way"
+  body="The report is pieces for a renderer, the same as configuration text, so a theme or renderer of your own applies to both."
+>
+  <Button href="/configuration-text/#highlighting" label="Highlighting →" variant="primary" large />
+  <Button href="/language/variables-and-outputs/" label="Variables and .vars files →" variant="secondary" large />
+</CtaBanner>
