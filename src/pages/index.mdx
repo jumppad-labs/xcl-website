@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/Shell.astro
 title: "XCL"
-description: "XCL is a relational configuration language built on the readability of HCL: references between blocks, graph-based processing, plugins, variables, modules, functions and state. Go implementation available now."
+description: "XCL is a relational configuration language built on the readability of HCL: references between blocks, graph-based processing, plugins, variables, modules, functions and state. Available for Go and Python."
 ---
 import Hero from "../components/sections/Hero.astro";
 import Section from "../components/sections/Section.astro";
@@ -12,17 +12,47 @@ import Button from "../components/Button.astro";
 import InstallBlock from "../components/InstallBlock.astro";
 import FeatureCard from "../components/FeatureCard.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import { pypiURL } from "../config/site";
 
 <Hero
   variant="centered"
   heading="XCL: a modern relational configuration language"
   sub="A configuration language built on the readability of HCL. Blocks relate to each other through references, are processed in dependency order and run through plugins, so configuration can be planned, applied, changed and destroyed. Available for Go and Python."
 >
-  <Badge slot="badge" text="v0.4.0 · Go and Python" variant="green" dot />
+  <Badge slot="badge" text="v0.5.0 · Go and Python" variant="green" dot />
   <InstallBlock slot="install" command="go get github.com/jumppad-labs/xcl" />
   <Button href="/examples/configuration-only/" label="See an example →" variant="primary" large />
   <Button href="https://github.com/jumppad-labs/xcl" label="View on GitHub" variant="secondary" large external />
 </Hero>
+
+<Section heading="Install">
+
+<CodeTabs>
+  <div slot="go">
+
+```sh
+go get github.com/jumppad-labs/xcl
+```
+
+  The Go module needs no cgo and no C compiler.
+
+  </div>
+  <div slot="python">
+
+```sh
+pip install xcl-lang
+```
+
+  The package is imported as `xcl`. It bundles the XCL engine as a small
+  program and runs it as a subprocess, on every platform, so the API and the
+  results are the same everywhere, and no Go or C compiler is needed. Wheels
+  are published for Linux on glibc and on musl (Alpine), macOS and Windows,
+  each on x86-64 and arm64. See <a href={pypiURL}>xcl-lang on PyPI</a>.
+
+  </div>
+</CodeTabs>
+
+</Section>
 
 <Section heading="What is XCL?" surface>
 
