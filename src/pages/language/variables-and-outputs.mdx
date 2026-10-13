@@ -67,7 +67,7 @@ here overrides every other source:
 
 ```go title="main.go"
 local := registry.NewLocal()
-local.RegisterType(&App{}, "app")
+registry.Register[App](local, "app")
 
 c, err := xcl.NewConfig(
 	xcl.WithRegistry(local),

@@ -111,7 +111,7 @@ app "web" {
 A field whose type is a struct, tagged `block`, is a nested block. A pointer
 makes the block optional; a plain struct makes it required, so a block that
 leaves it out is an error at the block's position. The nested type is not an
-entity: it does not embed `types.ResourceBase` and has no address of its own.
+entity: it is not registered as a block type and has no address of its own.
 In Python a field annotated with a dataclass is a block, and `| None` with a
 default of `None` makes it optional.
 
@@ -468,8 +468,14 @@ class App(xcl.Resource):
 Every entity type builds on the same base. In Go it embeds
 `types.ResourceBase` with the `xcl:",remain"` tag, which gives it
 `depends_on`, `disabled` and `meta`; in Python it subclasses `xcl.Resource`.
-See [Built-in fields](/language/entities/#built-in-fields). Put together,
-the `app` type this page has built is:
+A type an application declares on its own registry may instead be a plain
+struct, without the embedding: xcl keeps the base for it, a field called
+`Meta`, a `types.Meta` with no tag, receives a copy of the metadata, fields
+tagged `disabled` or `depends_on` receive those values, and fields tagged as
+labels, such as `xcl:"name,label"`, are filled from the block's labels. A
+type served by a plugin always embeds the base. See
+[Built-in fields](/language/entities/#built-in-fields). Put together, the
+`app` type this page has built is:
 
 <CodeTabs>
   <div slot="go">
@@ -513,7 +519,9 @@ class App(xcl.Resource):
 
 Types that share fields share them through the base too. In Go, put the
 common fields in a struct that embeds `types.ResourceBase`, and embed that
-struct, again with `xcl:",remain"`, in each type. In Python, put them in a
+struct, again with `xcl:",remain"`, in each type. A plain struct embeds a
+struct of common fields the same way, with `xcl:",remain"`, and its fields are
+read as the plain struct's own. In Python, put them in a
 dataclass that subclasses `xcl.Resource` and subclass it; the base must
 itself be a dataclass, and only the registered class carries `@xcl.entity`.
 A subclass that adds a required field after the base's defaulted ones is

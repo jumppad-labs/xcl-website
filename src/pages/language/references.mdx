@@ -61,7 +61,9 @@ app "web" {
 ```
 
 In Go the field is typed as the referenced struct, or a slice of it, and
-receives a copy of the entity with its `Meta` filled in. In Python the field's
+receives a copy of the entity with its `Meta` filled in when the struct
+embeds `types.ResourceBase`. A plain struct as the field type receives the
+entity's attributes only, and its `Meta` is left empty. In Python the field's
 type is a plain dataclass naming the attributes to read, marked
 `xcl.field(block=False)` so it is an attribute rather than a nested block;
 attributes the dataclass does not name are dropped, and the registered entity

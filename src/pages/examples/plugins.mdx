@@ -148,7 +148,7 @@ template "welcome" {
 
 ## The types
 
-Each block type is a Go struct embedding `types.ResourceBase`. The Docker
+Each plugin block type is a Go struct embedding `types.ResourceBase`. The Docker
 plugin keeps its block types in a package of their own, `entities`, which
 holds no providers and imports no Docker library, so a program can import it
 to read back the blocks it applied without pulling in the plugin. The container
@@ -1256,9 +1256,10 @@ def plan_command(stdout, config_dir: str, docker_plugin: str, state_dir: str) ->
 
 `plan` hands the configuration's path to `Config.Diff`, which compares it with
 the state and returns the changes without creating, changing or saving
-anything. `diff.Render` turns them into text, a block per changed entity and
-a summary line. As in `inspect`, below, colour is decided for the writer
-itself, so `diff.Highlight` is added only when the output is a terminal:
+anything. `changes.Pieces()` lays them out as text, a block per changed
+entity and a summary line, and a renderer writes it. As in `inspect`, below,
+colour is decided for the writer itself, so `highlight.ANSI` renders it only
+when the output is a terminal and `highlight.Text` otherwise:
 
 <CodeTabs>
   <div slot="go">
@@ -1270,20 +1271,14 @@ func plan(out io.Writer, c *xcl.Config, configDir string) error {
 		return explainPluginLoad(err)
 	}
 
-	var options []diff.RenderOption
-
 	// as with inspect, colour is decided for out itself, so a plan written to
 	// a file or a pipe is plain text
+	var renderer highlight.Renderer = highlight.Text
 	if lipgloss.NewRenderer(out).ColorProfile() != termenv.Ascii {
-		renderer, err := highlight.NewANSIRenderer()
-		if err != nil {
-			return err
-		}
-
-		options = append(options, diff.Highlight(renderer))
+		renderer = highlight.ANSI
 	}
 
-	_, err = out.Write(diff.Render(changes, options...))
+	_, err = out.Write(renderer.Render(changes.Pieces()))
 
 	return err
 }
@@ -1313,7 +1308,7 @@ def plan(out, cfg: xcl.Config, config_dir: str) -> None:
     )
 ```
 
-Rendering a diff as text (`diff.Render`, with or without colour) is not yet available from Python, so `plan` prints the entities and summary counts the `xcl.Diff` holds; see the <a href={pythonParityURL}>parity list</a>.
+Rendering a diff as text (`changes.Pieces()`, with or without colour) is not yet available from Python, so `plan` prints the entities and summary counts the `xcl.Diff` holds; see the <a href={pythonParityURL}>parity list</a>.
 
   </div>
 </CodeTabs>
@@ -1423,7 +1418,8 @@ from a renderer made for standard output, so they show only in a terminal.
 turns it back into configuration text with `EncodeEntity`. It asks for the
 values the provider set, each marked, and for every reference as it was
 written, so the text shows how the entity is wired to the others. In a
-terminal it is syntax highlighted through `xcl.Highlight`:
+terminal its pieces are rendered with `highlight.ANSI`, so it is syntax
+highlighted:
 
 <CodeTabs>
   <div slot="go">
@@ -1438,26 +1434,20 @@ func inspect(out io.Writer, c *xcl.Config, address string) error {
 		return err
 	}
 
-	options := []xcl.EncodeOption{xcl.IncludeComputed(), xcl.ShowReferences()}
-
-	// xcl never checks for a terminal, asking it for colour is the program's
-	// decision. It is decided for out itself, so output to a file or a pipe
-	// is plain text.
-	if lipgloss.NewRenderer(out).ColorProfile() != termenv.Ascii {
-		renderer, err := highlight.NewANSIRenderer()
-		if err != nil {
-			return err
-		}
-
-		options = append(options, xcl.Highlight(renderer))
-	}
-
-	text, err := xcl.EncodeEntity(entity, options...)
+	text, err := xcl.EncodeEntity(entity, xcl.IncludeComputed(), xcl.ShowReferences())
 	if err != nil {
 		return err
 	}
 
-	_, err = out.Write(text)
+	// xcl never checks for a terminal, asking it for colour is the program's
+	// decision. It is decided for out itself, so output to a file or a pipe
+	// is plain text.
+	var renderer highlight.Renderer = highlight.Text
+	if lipgloss.NewRenderer(out).ColorProfile() != termenv.Ascii {
+		renderer = highlight.ANSI
+	}
+
+	_, err = out.Write(renderer.Render(highlight.Pieces(text)))
 
 	return err
 }

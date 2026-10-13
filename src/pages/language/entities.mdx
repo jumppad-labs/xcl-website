@@ -43,8 +43,8 @@ one, and a type registered without one never takes one.
 
 ```go title="main.go"
 local := registry.NewLocal()
-local.RegisterType(&PostgreSQL{}, "database", "postgres") // database "postgres" "main" {}
-local.RegisterType(&App{}, "app")                         // app "web" {}
+registry.Register[PostgreSQL](local, "database", "postgres") // database "postgres" "main" {}
+registry.Register[App](local, "app")                         // app "web" {}
 ```
 
   </div>
@@ -130,7 +130,10 @@ docker "container" "web" {
 In code these fields live on the base every entity type builds on. In Go it
 is `types.ResourceBase`, embedded with the `xcl:",remain"` tag so that
 `depends_on`, `disabled` and `meta` are decoded alongside the type's own
-fields. In Python it is `xcl.Resource`, which also gives the entity an
+fields. A declared type can instead be a plain struct: xcl keeps the base for
+it, and a field called `Meta`, a `types.Meta` with no tag, receives a copy of
+the metadata, while fields tagged `disabled` or `depends_on` receive those
+values. In Python it is `xcl.Resource`, which also gives the entity an
 `address` property:
 
 <CodeTabs>
