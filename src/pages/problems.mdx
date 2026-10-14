@@ -39,9 +39,12 @@ within that block, as a path such as `modls` or `workspace[0].directory`. It
 also keeps the lines of source around the fault, read when the problem was
 found, so showing them never opens the file again.
 
-Syntax errors, attributes and blocks the schema does not allow, values of the
-wrong type and a `.vars` file that is not well formed are all reported this
-way, one diagnostic per problem.
+Every problem an operation finds is reported this way, one diagnostic per
+problem: syntax errors, attributes and blocks the schema does not allow,
+values of the wrong type, references to something defined nowhere, a `.vars`
+file that is not well formed, and a provider that fails during apply or
+destroy, placed at the block of the entity it failed for. A problem with a
+reference is placed at the reference as written.
 
 <CodeTabs>
   <div slot="go">
@@ -79,10 +82,12 @@ except xcl.ConfigError as err:
 
 In Go, `xclerrors.Diagnostic` embeds the `hcl.Diagnostic` it was made from, so
 `Severity`, `Summary`, `Detail`, `Subject` and `Context` are all there, and adds
-`Entity`, `Field`, `EntityPos`, where the block starts, and `Source`, the lines
-around the fault. `Diagnostics()` returns the diagnostics among the
-`ConfigError`'s errors, in the order they were found; `Errors` holds them all,
-along with any problem that is not about the configuration text. A
+`Entity`, `Field`, `EntityPos`, where the block starts, `Source`, the lines
+around the fault, and `Cause`, the error the problem was found through.
+`errors.Is` and `errors.As` reach the cause, so a provider's own error is still
+matched through the `ConfigError`; a provider failure's cause is an
+`*xclerrors.ProviderError` naming the step and the address. `Diagnostics()`
+returns the `ConfigError`'s diagnostics in the order they were found. A
 diagnostic's `Error` is a single line, made for logs:
 
 ```text
