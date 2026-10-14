@@ -1,0 +1,215 @@
+---
+layout: ../../layouts/Shell.astro
+title: "Viper example - xcl"
+description: "An application's settings written in xcl and read through Viper: plain Go structs, no xcl types, with defaults, environment variables and flags working as they do for any other format."
+---
+import Hero from "../../components/sections/Hero.astro";
+import Prose from "../../components/sections/Prose.astro";
+import CtaBanner from "../../components/sections/CtaBanner.astro";
+import Button from "../../components/Button.astro";
+import { pythonParityURL } from "../../config/site";
+
+<Hero
+  heading="Example: settings through Viper"
+  sub="An application's own settings written in xcl and read through Viper, into plain Go structs that know nothing about xcl."
+/>
+
+<Prose>
+
+Many programs already read their settings with
+[Viper](https://github.com/spf13/viper): defaults in code, a file, environment
+variables over the file, flags over both. The `github.com/jumppad-labs/xcl/viper`
+package adds xcl as one more file format. The program keeps its Viper and its
+keys, and the file gains what xcl has: blocks, variables, references and
+functions, and a clear report when something in it is wrong.
+
+The example is the settings of a runner: the server it reports to, and the
+work it takes on.
+
+## The Go types
+
+The data model is the application's. A block type is a plain struct with
+`xcl` tags, and nothing else: no embedded type, no `types.Meta`, no import of
+xcl at all. A label field is optional too. The block's name is part of its
+Viper key, so a type read only through Viper does not need one.
+
+```go title="settings.go"
+// Server is where the runner reports to
+type Server struct {
+	URL     string `xcl:"url"`
+	Timeout string `xcl:"timeout,optional"`
+}
+
+// Runner is one runner and the work it takes on
+type Runner struct {
+	Capacity int               `xcl:"capacity,optional"`
+	Tasks    []string          `xcl:"tasks,optional"`
+	Labels   map[string]string `xcl:"labels,optional"`
+}
+```
+
+## The configuration
+
+```hcl title="runner.xcl"
+variable "region" {
+  default = "eu-west"
+}
+
+server "platform" {
+  url     = "https://maalstrom.dev"
+  timeout = "30s"
+}
+
+runner "nas" {
+  capacity = 3
+  tasks    = ["document", "plan"]
+
+  labels = {
+    network = "lan"
+    region  = variable.region
+  }
+}
+```
+
+Everything an xcl file can do works here. `variable.region` is resolved before
+Viper sees the value, as are functions such as `env("RUNNER_REGION")` and
+references to other blocks, such as `server.platform.url`.
+
+## Reading it
+
+`xclviper.New` takes the block types and returns a Viper. From there on it is
+Viper as usual:
+
+```go title="main.go"
+v := xclviper.New(
+	xclviper.Type[Server]("server"),
+	xclviper.Type[Runner]("runner"),
+)
+
+// a default in code, the file over it, and the environment over both
+v.SetDefault("runner.nas.capacity", 1)
+v.SetEnvPrefix("RUNNER")
+v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+v.AutomaticEnv()
+
+v.SetConfigFile("runner.xcl")
+if err := v.ReadInConfig(); err != nil {
+	return err
+}
+
+fmt.Println("server:  ", v.GetString("server.platform.url"))
+fmt.Println("capacity:", v.GetInt("runner.nas.capacity"))
+fmt.Println("tasks:   ", v.GetStringSlice("runner.nas.tasks"))
+fmt.Println("region:  ", v.GetString("runner.nas.labels.region"))
+```
+
+```text
+server:   https://maalstrom.dev
+capacity: 3
+tasks:    [document plan]
+region:   eu-west
+```
+
+Each block is laid out under `<type>.<name>`, with its attributes named as the
+struct's tags name them: `runner "nas" { capacity = 3 }` is
+`runner.nas.capacity`. A block type with a subtype adds it,
+`database "postgres" "main"` is `database.postgres.main`, and nested blocks are
+nested keys.
+
+The environment overrides the file the way it does for any format Viper reads:
+
+```bash
+RUNNER_RUNNER_NAS_CAPACITY=8 ./runner
+```
+
+```text
+capacity: 8
+```
+
+Flags bind the same way, with `v.BindPFlag`, so a Cobra command can set any
+key the file can.
+
+## Back into the struct
+
+Viper's `UnmarshalKey` fills the struct from a block's keys:
+
+```go title="main.go"
+var nas Runner
+if err := v.UnmarshalKey("runner.nas", &nas); err != nil {
+	return err
+}
+
+fmt.Printf("%+v\n", nas)
+```
+
+```text
+{Capacity:3 Tasks:[document plan] Labels:map[network:lan region:eu-west]}
+```
+
+An attribute the file leaves out is left out of Viper's keys, so
+`v.GetInt("runner.nas.capacity")` falls back to the default of 1. `UnmarshalKey`
+does not: it fills the struct from what the file set for the block, and
+`Capacity` stays 0. Read a key that has a default with `Get`, or set the
+default in the struct before unmarshalling into it.
+
+## When the file is wrong
+
+A mistake in the file is reported by `ReadInConfig` as an xcl
+[diagnostic](/problems/), so the program can show it the way xcl shows any
+problem in configuration, with the block, the field and the line at fault:
+
+```hcl title="broken.xcl"
+runner "nas" {
+  capacity = 3
+  taks     = ["document"]
+}
+```
+
+```go title="main.go"
+if err := v.ReadInConfig(); err != nil {
+	var problem *xclerrors.Diagnostic
+	if errors.As(err, &problem) {
+		report := xcl.DiagnosticPieces(xclerrors.Diagnostics{problem}, 80)
+		os.Stderr.Write(highlight.Text.Render(report))
+	}
+
+	return err
+}
+```
+
+```text
+Error: Unsupported argument
+
+  on broken.xcl line 3, in runner.nas, field taks:
+     3 |   taks     = ["document"]
+
+An argument named "taks" is not expected here.
+```
+
+`highlight.ANSI` in place of `highlight.Text` colours the report for a
+terminal.
+
+## What to notice
+
+- **The structs are the application's.** No embedded type and no xcl import;
+  the `xcl` tags are all xcl needs.
+- **Viper stays Viper.** Defaults, environment variables, flags and
+  `UnmarshalKey` work as they do for YAML or TOML, and the program can still
+  read those formats too.
+- **The file is more than a format.** Variables, functions and references
+  are resolved before Viper sees a value.
+- **Mistakes are reported as configuration.** A typo is named with its block,
+  field and line, with the source around it.
+
+The `viper` package is Go only. From Python, read the same file with a
+`Config` and its lookups; see the <a href={pythonParityURL}>parity list</a>.
+
+</Prose>
+
+<CtaBanner
+  heading="More than settings?"
+  body="When the configuration describes things to create, xcl applies it with providers, keeps state and works out what changed."
+>
+  <Button href="/examples/configuration-only/" label="Configuration only example →" variant="primary" large />
+  <Button href="/examples/plugins/" label="Plugins and the lifecycle →" variant="secondary" large />
+</CtaBanner>
