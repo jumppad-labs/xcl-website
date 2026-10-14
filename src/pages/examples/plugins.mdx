@@ -148,8 +148,11 @@ template "welcome" {
 
 ## The types
 
-Each plugin block type is a Go struct embedding `types.ResourceBase`. The Docker
-plugin keeps its block types in a package of their own, `entities`, which
+The Docker plugin's block types are Go structs embedding `types.ResourceBase`.
+A plugin's types can also be plain structs, laid out as an application's are,
+with a label field and a `Meta` field where they want them; one with neither is
+a [singleton](/language/entities/#singletons). The Docker plugin keeps its
+block types in a package of their own, `entities`, which
 holds no providers and imports no Docker library, so a program can import it
 to read back the blocks it applied without pulling in the plugin. The container
 has two computed fields, `docker_id` and `ip_address`, marked `computed` in

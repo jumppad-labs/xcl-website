@@ -33,8 +33,8 @@ app "web" {
 ```
 
 An entity is referred to by its address, `database.postgres.main` for a type
-with a subtype and `app.web` for one without, followed by the attribute to
-read; see [Entities](/language/entities/) for how an address is formed. The
+with a subtype, `app.web` for one without, and `runner` for a singleton,
+followed by the attribute to read, as in `runner.server`; see [Entities](/language/entities/) for how an address is formed. The
 referenced entity is always processed before the entity that refers to it, so
 `database.postgres.main` has its values, including any a provider computes,
 by the time `app.web` is read. An entity's bookkeeping is reachable the same

@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/Shell.astro
 title: "Viper example - xcl"
-description: "An application's settings written in xcl and read through Viper: plain Go structs, no xcl types, with defaults, environment variables and flags working as they do for any other format."
+description: "An application's settings written in xcl and read through Viper: plain Go structs, no xcl types, a directory of files, a singleton block, references kept in order, with defaults, environment variables and flags working as they do for any other format."
 ---
 import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
@@ -23,150 +23,181 @@ package adds xcl as one more file format. The program keeps its Viper and its
 keys, and the file gains what xcl has: blocks, variables, references and
 functions, and a clear report when something in it is wrong.
 
-The example is the settings of a runner: the server it reports to, and the
-work it takes on.
+The example is the settings of a runner: the server it reports to, the agents
+it can run, and which agents take which tasks.
 
 ## The Go types
 
 The data model is the application's. A block type is a plain struct with
-`xcl` tags, and nothing else: no embedded type, no `types.Meta`, no import of
-xcl at all. A label field is optional too. The block's name is part of its
-Viper key, so a type read only through Viper does not need one.
+`xcl` tags, and nothing else: no embedded type and no import of xcl at all.
 
 ```go title="settings.go"
-// Server is where the runner reports to
-type Server struct {
-	URL     string `xcl:"url"`
-	Timeout string `xcl:"timeout,optional"`
+// Runner is the runner itself. It has no label field, so it is a
+// singleton: there is one, written runner { ... }
+type Runner struct {
+	Server string `xcl:"server" mapstructure:"server"`
+	Listen string `xcl:"listen,optional" mapstructure:"listen"`
 }
 
-// Runner is one runner and the work it takes on
-type Runner struct {
-	Capacity int               `xcl:"capacity,optional"`
-	Tasks    []string          `xcl:"tasks,optional"`
-	Labels   map[string]string `xcl:"labels,optional"`
+// Agent is one way the runner can perform a task
+type Agent struct {
+	Name              string `xcl:"name,label" mapstructure:"name"`
+	Model             string `xcl:"model" mapstructure:"model"`
+	MaxConcurrentRuns int    `xcl:"max_concurrent_runs,optional" mapstructure:"max_concurrent_runs"`
+}
+
+// Task says which agents take a task, in order of preference
+type Task struct {
+	Agents []Agent `xcl:"agents" mapstructure:"agents"`
 }
 ```
+
+A type with a label field is written with a label, `agent "claude" {}`. A
+type with no label field, and no `Meta` field, is a
+[singleton](/language/entities/#singletons): it is written without labels,
+and the configuration holds one of it.
 
 ## The configuration
 
-```hcl title="runner.xcl"
-variable "region" {
-  default = "eu-west"
+A configuration is a directory, so it can be split into files:
+
+```hcl title="config/runner.xcl"
+variable "listen" {
+  default = "127.0.0.1:7660"
 }
 
-server "platform" {
-  url     = "https://maalstrom.dev"
-  timeout = "30s"
-}
-
-runner "nas" {
-  capacity = 3
-  tasks    = ["document", "plan"]
-
-  labels = {
-    network = "lan"
-    region  = variable.region
-  }
+runner {
+  server = "https://maalstrom.app"
+  listen = variable.listen
 }
 ```
 
-Everything an xcl file can do works here. `variable.region` is resolved before
-Viper sees the value, as are functions such as `env("RUNNER_REGION")` and
-references to other blocks, such as `server.platform.url`.
+```hcl title="config/agents.xcl"
+agent "claude" {
+  model               = "claude/opus"
+  max_concurrent_runs = 2
+}
+
+agent "local" {
+  model = "ollama/qwen3:32b"
+}
+
+task "document" {
+  agents = [agent.claude, agent.local]
+}
+```
+
+Everything an xcl file can do works here, across the files of the directory.
+`variable.listen` is resolved before Viper sees the value, as are functions
+such as `env("RUNNER_SERVER")` and references to other blocks, such as
+`agent.claude`, wherever in the directory they are declared.
 
 ## Reading it
 
-`xclviper.New` takes the block types and returns a Viper. From there on it is
-Viper as usual:
+`xclviper.New` takes the block types and returns a Viper, and `xclviper.Read`
+reads a file or a directory into it. From there on it is Viper as usual:
 
 ```go title="main.go"
 v := xclviper.New(
-	xclviper.Type[Server]("server"),
 	xclviper.Type[Runner]("runner"),
+	xclviper.Type[Agent]("agent"),
+	xclviper.Type[Task]("task"),
 )
 
 // a default in code, the file over it, and the environment over both
-v.SetDefault("runner.nas.capacity", 1)
-v.SetEnvPrefix("RUNNER")
+v.SetDefault("agent.claude.max_concurrent_runs", 1)
+v.SetEnvPrefix("MAALSTROM")
 v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 v.AutomaticEnv()
 
-v.SetConfigFile("runner.xcl")
-if err := v.ReadInConfig(); err != nil {
+if err := xclviper.Read(v, "./config"); err != nil {
 	return err
 }
 
-fmt.Println("server:  ", v.GetString("server.platform.url"))
-fmt.Println("capacity:", v.GetInt("runner.nas.capacity"))
-fmt.Println("tasks:   ", v.GetStringSlice("runner.nas.tasks"))
-fmt.Println("region:  ", v.GetString("runner.nas.labels.region"))
+fmt.Println("server:", v.GetString("runner.server"))
+fmt.Println("listen:", v.GetString("runner.listen"))
+fmt.Println("claude:", v.GetString("agent.claude.model"))
 ```
 
 ```text
-server:   https://maalstrom.dev
-capacity: 3
-tasks:    [document plan]
-region:   eu-west
+server: https://maalstrom.app
+listen: 127.0.0.1:7660
+claude: claude/opus
 ```
 
-Each block is laid out under `<type>.<name>`, with its attributes named as the
-struct's tags name them: `runner "nas" { capacity = 3 }` is
-`runner.nas.capacity`. A block type with a subtype adds it,
-`database "postgres" "main"` is `database.postgres.main`, and nested blocks are
-nested keys.
+Each block is laid out under `<type>.<label>`, with its attributes named as
+the struct's tags name them: `agent "claude" { model = … }` is
+`agent.claude.model`. A singleton is laid out under its type alone:
+`runner { server = … }` is `runner.server`. A block type with a subtype adds
+it, `database "postgres" "main"` is `database.postgres.main`, and nested
+blocks are nested keys.
+
+`v.SetConfigFile` and `v.ReadInConfig` still work for a single file;
+`xclviper.Read` is what reads a directory.
 
 The environment overrides the file the way it does for any format Viper reads:
 
 ```bash
-RUNNER_RUNNER_NAS_CAPACITY=8 ./runner
+MAALSTROM_RUNNER_SERVER=https://maalstrom.internal ./runner
 ```
 
 ```text
-capacity: 8
+server: https://maalstrom.internal
 ```
 
 Flags bind the same way, with `v.BindPFlag`, so a Cobra command can set any
 key the file can.
 
-## Back into the struct
+## References, in order
 
-Viper's `UnmarshalKey` fills the struct from a block's keys:
+A list of references to labelled blocks, such as `agents`, stays a list in
+the order written, and each element keeps its label under the label field's
+name:
 
 ```go title="main.go"
-var nas Runner
-if err := v.UnmarshalKey("runner.nas", &nas); err != nil {
+var settings struct {
+	Runner Runner          `mapstructure:"runner"`
+	Task   map[string]Task `mapstructure:"task"`
+}
+if err := v.Unmarshal(&settings); err != nil {
 	return err
 }
 
-fmt.Printf("%+v\n", nas)
+for _, agent := range settings.Task["document"].Agents {
+	fmt.Println(agent.Name, agent.Model)
+}
 ```
 
 ```text
-{Capacity:3 Tasks:[document plan] Labels:map[network:lan region:eu-west]}
+claude claude/opus
+local ollama/qwen3:32b
 ```
 
+Labelled blocks nested inside a block, rather than referred to, stay keyed by
+their label, as top-level blocks are.
+
 An attribute the file leaves out is left out of Viper's keys, so
-`v.GetInt("runner.nas.capacity")` falls back to the default of 1. `UnmarshalKey`
-does not: it fills the struct from what the file set for the block, and
-`Capacity` stays 0. Read a key that has a default with `Get`, or set the
+`v.GetInt("agent.local.max_concurrent_runs")` falls back to a default set for
+it. `Unmarshal` does not: it fills the struct from what the file set, and
+the field stays 0. Read a key that has a default with `Get`, or set the
 default in the struct before unmarshalling into it.
 
 ## When the file is wrong
 
-A mistake in the file is reported by `ReadInConfig` as an xcl
+A mistake in the file is reported by `xclviper.Read` as an xcl
 [diagnostic](/problems/), so the program can show it the way xcl shows any
-problem in configuration, with the block, the field and the line at fault:
+problem in configuration, with the file, the block, the field and the line at
+fault:
 
-```hcl title="broken.xcl"
-runner "nas" {
-  capacity = 3
-  taks     = ["document"]
+```hcl title="config/agents.xcl"
+agent "claude" {
+  model = "claude/opus"
+  modle = "claude/haiku"
 }
 ```
 
 ```go title="main.go"
-if err := v.ReadInConfig(); err != nil {
+if err := xclviper.Read(v, "./config"); err != nil {
 	var problem *xclerrors.Diagnostic
 	if errors.As(err, &problem) {
 		report := xcl.DiagnosticPieces(xclerrors.Diagnostics{problem}, 80)
@@ -180,10 +211,22 @@ if err := v.ReadInConfig(); err != nil {
 ```text
 Error: Unsupported argument
 
-  on broken.xcl line 3, in runner.nas, field taks:
-     3 |   taks     = ["document"]
+  on config/agents.xcl line 3, in agent.claude, field modle:
+     3 |   modle = "claude/haiku"
 
-An argument named "taks" is not expected here.
+An argument named "modle" is not expected here.
+```
+
+A runner given a label, `runner "nas" {}`, is reported at the label, since
+the type is a singleton:
+
+```text
+Error: Unexpected label
+
+  on config/runner.xcl line 5, in runner:
+     5 | runner "nas" {
+
+runner takes no labels, there is one of it: write it as runner { … }, without "nas".
 ```
 
 `highlight.ANSI` in place of `highlight.Text` colours the report for a
@@ -192,16 +235,20 @@ terminal.
 ## What to notice
 
 - **The structs are the application's.** No embedded type and no xcl import;
-  the `xcl` tags are all xcl needs.
+  the `xcl` tags are all xcl needs, and whether a type takes a label follows
+  from whether it has a label field.
+- **A configuration can be a directory.** `xclviper.Read` reads every `.xcl`
+  file in it as one configuration, so blocks refer across files.
 - **Viper stays Viper.** Defaults, environment variables, flags and
-  `UnmarshalKey` work as they do for YAML or TOML, and the program can still
+  `Unmarshal` work as they do for YAML or TOML, and the program can still
   read those formats too.
 - **The file is more than a format.** Variables, functions and references
-  are resolved before Viper sees a value.
-- **Mistakes are reported as configuration.** A typo is named with its block,
-  field and line, with the source around it.
+  are resolved before Viper sees a value, and a list of references keeps its
+  order.
+- **Mistakes are reported as configuration.** A typo is named with its file,
+  block, field and line, with the source around it.
 
-The `viper` package is Go only. From Python, read the same file with a
+The `viper` package is Go only. From Python, read the same files with a
 `Config` and its lookups; see the <a href={pythonParityURL}>parity list</a>.
 
 </Prose>

@@ -77,11 +77,14 @@ and nothing is started, checked or searched until it is needed; see
 `registry.Register[T]` declares the Go type `T` as a block type on a
 registry, under a name made of the block type and an optional subtype. `T` is
 a plain struct of the application's own, or a struct embedding
-`types.ResourceBase` as a plugin's types do. It works on every supported Go
-version; on Go 1.27 the same is also a method, `local.Register[T]("deployment")`,
-and `RegisterType(&T{}, ...)` takes a pointer to a value instead, for a type
-only known at run time. In Python the name is given by `@xcl.entity` on a
-dataclass subclassing `xcl.Resource`, and `register_type` takes the class:
+`types.ResourceBase`. A plain struct with neither label fields nor a `Meta`
+field cannot read a name, so it is a
+[singleton](/language/entities/#singletons), written without labels. It works
+on every supported Go version; on Go 1.27 the same is also a method,
+`local.Register[T]("deployment")`, and `RegisterType(&T{}, ...)` takes a
+pointer to a value instead, for a type only known at run time. In Python the
+name is given by `@xcl.entity` on a dataclass, subclassing `xcl.Resource` or
+with a label field, and `register_type` takes the class:
 
 <CodeTabs>
   <div slot="go">
@@ -328,8 +331,9 @@ name, more than one subtype, an empty subtype, a prototype that is not a
 pointer to a struct, or a plain struct xcl cannot lay out: one declaring an
 attribute called `meta`, a `Meta` field that is not a `types.Meta` or a
 `types.Meta` under another name, a `disabled` or `depends_on` field of the
-wrong type, or label fields that are not strings or do not match the block's
-labels. `Register` also panics for a `T` that is not a struct.
+wrong type, label fields that are not strings or do not match the block's
+labels, or a subtype for a singleton. `Register` also panics for a `T` that is
+not a struct.
 `RegisterPlugin` panics for a nil plugin, and `WithRegistry` for a nil
 registry.
 
