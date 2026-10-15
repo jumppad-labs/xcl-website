@@ -67,7 +67,9 @@ app "web" {
 The `optional` option lets a block leave the attribute out. In Python a field
 with a default, or annotated `| None`, is optional. The tag carries no
 default: the Python dataclass default is the value an omitted attribute gets,
-and in Go the application decides what an omitted `replicas` means.
+and in Go the application decides what an omitted `replicas` means. An
+omitted attribute held as a Go pointer is `nil`, and one annotated `| None`
+in Python is `None`, rather than an empty value such as `0` or `""`.
 
 <CodeTabs>
   <div slot="go">
