@@ -261,7 +261,7 @@ def slugify(title: str) -> str:
 
 
 local = xcl.LocalRegistry()
-local.register_type(App)
+local.register_type(App, "app")
 local.register_function(slugify)
 
 with xcl.Config(registries=[local]) as cfg:

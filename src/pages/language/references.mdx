@@ -62,11 +62,10 @@ app "web" {
 
 In Go the field is typed as the referenced struct, or a slice of it, and
 receives a copy of the entity: its labels and attributes, and its `Meta` when
-the struct has a `Meta types.Meta` field. In Python the field's
-type is a plain dataclass naming the attributes to read, marked
-`xcl.field(block=False)` so it is an attribute rather than a nested block;
-attributes the dataclass does not name are dropped, and the registered entity
-class itself can not be used as a field type:
+the struct has a `Meta types.Meta` field. In Python the field is typed as the
+referenced dataclass, or a list of it, marked `xcl.field(block=False)` so it
+is an attribute rather than a nested block, and receives the same, its `meta`
+included when the dataclass declares one:
 
 <CodeTabs>
   <div slot="go">
@@ -92,25 +91,19 @@ type App struct {
   <div slot="python">
 
 ```python title="resources.py"
-@xcl.entity("database", "postgres")
 @dataclass
-class PostgreSQL(xcl.Resource):
+class PostgreSQL:
     location: str
     port: int = 5432
+    meta: xcl.Meta | None = None
 
 
 @dataclass
-class Endpoint:
-    location: str
-    port: int = 5432
-
-
-@xcl.entity("app")
-@dataclass
-class App(xcl.Resource):
+class App:
     image: str
-    database: Endpoint = xcl.field(block=False)
-    databases: list[Endpoint] = xcl.field(block=False, default_factory=list)
+    database: PostgreSQL = xcl.field(block=False)
+    databases: list[PostgreSQL] = xcl.field(block=False, default_factory=list)
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>

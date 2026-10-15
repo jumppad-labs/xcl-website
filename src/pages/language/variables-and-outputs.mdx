@@ -83,7 +83,7 @@ if err != nil {
 
 ```python title="main.py"
 local = xcl.LocalRegistry()
-local.register_type(App)
+local.register_type(App, "app")
 
 with xcl.Config(registries=[local], variables={"region": "us"}) as cfg:
     cfg.apply("./config")

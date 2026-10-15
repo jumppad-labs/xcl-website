@@ -46,10 +46,10 @@ type App struct {
   <div slot="python">
 
 ```python title="resources.py"
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -85,11 +85,11 @@ type App struct {
   <div slot="python">
 
 ```python title="resources.py"
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
     replicas: int = 2
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -142,11 +142,11 @@ class Health:
     interval: int = 10
 
 
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
     health: Health | None = None
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -248,11 +248,11 @@ class Volume:
     name: str = xcl.field(label=True, default="")
 
 
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
     volume: list[Volume] = xcl.field(default_factory=list)
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -315,11 +315,11 @@ class Listener:
     name: str = xcl.field(label=True, default="")
 
 
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
     listener: dict[str, Listener] = xcl.field(default_factory=dict)
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -360,11 +360,11 @@ type App struct {
   <div slot="python">
 
 ```python title="resources.py"
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
     labels: dict[str, str] = xcl.field(default_factory=dict)
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -413,11 +413,11 @@ class Endpoint:
     tls: bool = False
 
 
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
     default_endpoint: Endpoint | None = xcl.field(block=False, default=None)
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -483,11 +483,11 @@ type App struct {
   <div slot="python">
 
 ```python title="resources.py"
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
     endpoint: xcl.Computed[str] = None
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -524,11 +524,11 @@ type App struct {
   <div slot="python">
 
 ```python title="resources.py"
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
     token: xcl.Sensitive[str] | None = None
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -543,7 +543,10 @@ block's labels, and a field called `Meta`, a `types.Meta` with no tag,
 receives a copy of the metadata, with `Meta.Disabled` and `Meta.DependsOn`
 among it. A type declares no fields called `depends_on`, `disabled` or
 `meta`, and does not embed `types.ResourceBase`, which xcl refuses when the
-type is registered. In Python it subclasses `xcl.Resource`. See
+type is registered. In Python a type is a plain dataclass in the same way: a
+field declared `xcl.field(label=True)` is filled from a label, a field
+`meta: xcl.Meta | None` receives the metadata, and fields called `disabled`
+and `depends_on` receive those values when the class declares them. See
 [Built-in fields](/language/entities/#built-in-fields). Put together, the
 `app` type this page has built is:
 
@@ -570,9 +573,8 @@ type App struct {
   <div slot="python">
 
 ```python title="resources.py"
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
     replicas: int = 2
     health: Health | None = None
@@ -582,6 +584,7 @@ class App(xcl.Resource):
     default_endpoint: Endpoint | None = xcl.field(block=False, default=None)
     endpoint: xcl.Computed[str] = None
     token: xcl.Sensitive[str] | None = None
+    name: str = xcl.field(label=True, default="")
 ```
 
   </div>
@@ -590,9 +593,8 @@ class App(xcl.Resource):
 Types that share fields share them through a struct of their own. In Go, put
 the common fields in a struct and embed it in each type with
 `xcl:",remain"`; its fields are read as the type's own, its label fields and
-`Meta` field included. In Python, put them in a
-dataclass that subclasses `xcl.Resource` and subclass it; the base must
-itself be a dataclass, and only the registered class carries `@xcl.entity`.
+`Meta` field included. In Python, put them in a dataclass and subclass it;
+the base must itself be a dataclass, and only the subclasses are registered.
 A subclass that adds a required field after the base's defaulted ones is
 declared `@dataclass(kw_only=True)`, as the dataclass rules require.
 
@@ -625,21 +627,24 @@ type Job struct {
 
 ```python title="resources.py"
 @dataclass
-class Workload(xcl.Resource):
+class Workload:
     image: str
     replicas: int = 2
+    name: str = xcl.field(label=True, default="")
 
 
-@xcl.entity("app")
 @dataclass
 class App(Workload):
     listener: dict[str, Listener] = xcl.field(default_factory=dict)
 
 
-@xcl.entity("job")
 @dataclass(kw_only=True)
 class Job(Workload):
     schedule: str
+
+
+local.register_type(App, "app")
+local.register_type(Job, "job")
 ```
 
   </div>
