@@ -50,17 +50,22 @@ registry.Register[App](local, "app")                         // app "web" {}
   </div>
   <div slot="python">
 
-```python title="resources.py"
-@xcl.entity("database", "postgres")  # database "postgres" "main" {}
+```python title="main.py"
 @dataclass
-class PostgreSQL(xcl.Resource):
+class PostgreSQL:
     location: str
+    meta: xcl.Meta | None = None
 
 
-@xcl.entity("app")                   # app "web" {}
 @dataclass
-class App(xcl.Resource):
+class App:
     image: str
+    meta: xcl.Meta | None = None
+
+
+local = xcl.LocalRegistry()
+local.register_type(PostgreSQL, "database", "postgres")  # database "postgres" "main" {}
+local.register_type(App, "app")                          # app "web" {}
 ```
 
   </div>
@@ -72,7 +77,9 @@ saying which labels its type takes: `app takes a label: write it as app
 
 Each entity is declared once. A second block with the same labels, in the same
 file or another file of the configuration, is an error naming where the first
-one is.
+one is: `app.web is already declared at <file>:<line>,<col>-<col>, each entity
+is declared once`, or for a singleton `runner is declared once, it is already
+declared at <file>:<line>,<col>-<col>`.
 
 ## Singletons
 
@@ -89,8 +96,8 @@ type alone, `runner`, so `runner.server` reads its `server`.
 
 Whether a type is a singleton follows from whether it can read a name. A type
 reads its name through a label field, or through the entity's metadata: in Go
-a field called `Meta`, in Python `xcl.Resource`. A type with neither is a
-singleton. A singleton takes no subtype.
+a field called `Meta`, in Python a field called `meta`. A type with neither is
+a singleton. A singleton takes no subtype.
 
 <CodeTabs>
   <div slot="go">
@@ -107,12 +114,14 @@ registry.Register[Runner](local, "runner") // runner {}
   </div>
   <div slot="python">
 
-```python title="resources.py"
-@xcl.entity("runner")  # runner {}
+```python title="main.py"
 @dataclass
 class Runner:
     server: str
     listen: str = ""
+
+
+local.register_type(Runner, "runner")  # runner {}
 ```
 
   </div>
@@ -190,8 +199,9 @@ also carries the `disabled` flag and the `depends_on` list configuration set
 on the block, as `Meta.Disabled` and `Meta.DependsOn`. Every block takes
 `disabled`, `depends_on` and `meta`, so a type declares no fields by those
 names; xcl holds them for every entity, beside the type's own fields. In
-Python it is `xcl.Resource`, which also gives the entity an `address`
-property:
+Python the field is called `meta`, an `xcl.Meta | None`, and carries the same,
+`meta.disabled` and `meta.depends_on` among it; it is not part of the class's
+schema:
 
 <CodeTabs>
   <div slot="go">
@@ -218,12 +228,14 @@ type Meta struct {
   </div>
   <div slot="python">
 
-```python title="xcl/_entity.py"
-@dataclass(kw_only=True)
-class Resource:
-    meta: Meta | None = None
-    depends_on: list[str] = field(default_factory=list)
-    disabled: bool = False
+```python title="resources.py"
+@dataclass
+class App:
+    image: str
+
+    # id, the entity's address, name, type, subtype, module, file, line,
+    # column, and disabled and depends_on, set in configuration on any block
+    meta: xcl.Meta | None = None
 ```
 
   </div>
@@ -250,9 +262,8 @@ fmt.Println(app.Meta.DependsOn, app.Meta.Disabled)
 ```python title="main.py"
 app = cfg.find(App, "app.web")
 
-print(app.address)                              # app.web
 print(app.meta.id, app.meta.file, app.meta.line)
-print(app.depends_on, app.disabled)
+print(app.meta.depends_on, app.meta.disabled)
 ```
 
   </div>

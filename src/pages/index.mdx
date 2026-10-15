@@ -19,7 +19,7 @@ import { pypiURL } from "../config/site";
   heading="XCL: a modern relational configuration language"
   sub="A configuration language built on the readability of HCL. Blocks relate to each other through references, are processed in dependency order and run through plugins, so configuration can be planned, applied, changed and destroyed. Available for Go and Python."
 >
-  <Badge slot="badge" text="v0.5.3 · Go and Python" variant="green" dot />
+  <Badge slot="badge" text="v0.10.0 · Go and Python" variant="green" dot />
   <InstallBlock slot="install" command="go get github.com/jumppad-labs/xcl" />
   <Button href="/examples/configuration-only/" label="See an example →" variant="primary" large />
   <Button href="https://github.com/jumppad-labs/xcl" label="View on GitHub" variant="secondary" large external />
@@ -103,15 +103,18 @@ type PostgreSQL struct {
 
 ```python title="resources.py"
 # PostgreSQL defines the block type `database "postgres"`
-@xcl.entity("database", "postgres")
 @dataclass
-class PostgreSQL(xcl.Resource):
+class PostgreSQL:
     location: str
     port: int
     username: str
 
     # Sensitive: shown only as (sensitive), read with reveal()
     password: xcl.Sensitive[str]
+
+    # The block's labels, its subtype and its name: "postgres" and "main"
+    engine: str = xcl.field(label=True, default="")
+    name: str = xcl.field(label=True, default="")
 
     # A nested block, optional because it may be None
     timeouts: Timeouts | None = None
@@ -281,7 +284,7 @@ print(db.location, db.port)
 
   <FeatureCard icon="🌐" title="Remote plugins">
     Install plugins straight from GitHub releases with one line,
-    `RegisterPlugin("jumppad-labs/xcl-plugin-docker", "v0.2.0")`. Versions
+    `RegisterPlugin("jumppad-labs/xcl-plugin-docker", "v0.3.0")`. Versions
     are pinned, every download is checked against its checksum and signature,
     and the plugin is cached for the next run. Private repositories work with
     a token. Start your own from the

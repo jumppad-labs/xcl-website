@@ -116,7 +116,7 @@ type Container struct {
   </div>
   <div slot="python">
 
-```python title="example/configonly/resources/resources.py"
+```python
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -128,10 +128,10 @@ import xcl
 # deployment reads. A map attribute holds values whose names are not known
 # ahead of time, and a single value can be read from it with
 # `config_map.api.data.db_host`.
-@xcl.entity("config_map")
 @dataclass
-class ConfigMap(xcl.Resource):
+class ConfigMap:
     data: dict[str, str]
+    meta: xcl.Meta | None = None
 
 
 # Secret defines the block type `secret`, values that must not be seen. Data
@@ -142,21 +142,19 @@ class ConfigMap(xcl.Resource):
 # As in Kubernetes, nothing else holds a secret's values: a container reads
 # one through a secret_key_ref naming the secret and the key, which are plain
 # strings, so the deployment never becomes sensitive itself.
-@xcl.entity("secret")
 @dataclass
-class Secret(xcl.Resource):
+class Secret:
     data: xcl.Sensitive[dict[str, str]]
+    meta: xcl.Meta | None = None
 
 
 # Container is the nested `container` block of a deployment. It is not an
-# entity of its own, so it does not subclass xcl.Resource and can not be
-# referenced by its own id, its fields are reached through the deployment
-# that holds it, i.e.
-# `deployment.api.container[0].port[0].container_port`.
+# entity of its own, so it is not registered and can not be referenced by
+# its own id, its fields are reached through the deployment that holds it,
+# i.e. `deployment.api.container[0].port[0].container_port`.
 #
-# The nested classes are declared before the deployment that holds them:
-# @xcl.entity reads a class's annotations when it is applied, so a name it
-# uses must already exist.
+# register_type reads a class's annotations when it is called, so every
+# class a registered type names must exist by then.
 @dataclass
 class Container:
     name: str
@@ -226,9 +224,10 @@ class Volume:
 # blocks, each of which nests further blocks of its own. The attribute name
 # is the block name used in configuration, so a repeated `container` block
 # is the `container` list.
-@xcl.entity("deployment")
 @dataclass
-class Deployment(xcl.Resource):
+class Deployment:
+    meta: xcl.Meta | None = None
+
     replicas: int | None = None
 
     # container is a repeated block, one entry per container block in the
@@ -288,7 +287,7 @@ type Rule struct {
   </div>
   <div slot="python">
 
-```python title="example/configonly/resources/resources.py"
+```python
 # Service defines the block type `service`, it routes traffic to the
 # containers of a deployment.
 #
@@ -296,16 +295,16 @@ type Rule struct {
 # manifest has no way to point at another object. Configuration parsed by xcl
 # does, so the service names the deployment by its id and reads the port out
 # of it, and the two can not drift apart.
-@xcl.entity("service")
 @dataclass
-class Service(xcl.Resource):
+class Service:
     deployment: str
     port: int
     target_port: int
+    meta: xcl.Meta | None = None
 
 
 # Rule is a nested `rule` block of an ingress, sending one path to one
-# service, named by its id. As above, it is declared before the ingress.
+# service, named by its id
 @dataclass
 class Rule:
     path: str
@@ -314,11 +313,11 @@ class Rule:
 
 
 # Ingress defines the block type `ingress`, it routes a host to a service
-@xcl.entity("ingress")
 @dataclass
-class Ingress(xcl.Resource):
+class Ingress:
     host: str
     rule: list[Rule] = xcl.field(default_factory=list)
+    meta: xcl.Meta | None = None
 ```
 
   </div>
@@ -545,7 +544,7 @@ func loadConfig(dir string, options ...xcl.ConfigOption) (*appConfig, error) {
 
 `Decode` has no Python form, so the Python program fills its own dataclass with one `all` call per block type it reads.
 
-```python title="example/configonly/main.py"
+```python
 import sys
 from dataclasses import dataclass
 
@@ -569,17 +568,17 @@ class AppConfig:
 # load_config declares the example's block types, applies the configuration in
 # path with the caller's options, and gathers it into an AppConfig.
 def load_config(path: str, **options) -> AppConfig:
-    # Declare each class on a local registry; the block type name used in
-    # configuration comes from its @xcl.entity decorator. A declared type
-    # needs nothing else: no plugin, no provider, no schema to write by hand.
-    # Every type the configuration declares must be declared here, even the
-    # ones the program does not read.
+    # Declare each class under the block type name used in configuration, on
+    # a local registry. A declared type needs nothing else: no plugin, no
+    # provider, no schema to write by hand. Every type the configuration
+    # declares must be declared here, even the ones the program does not
+    # read.
     local = xcl.LocalRegistry()
-    local.register_type(ConfigMap)
-    local.register_type(Secret)
-    local.register_type(Deployment)
-    local.register_type(Service)
-    local.register_type(Ingress)
+    local.register_type(ConfigMap, "config_map")
+    local.register_type(Secret, "secret")
+    local.register_type(Deployment, "deployment")
+    local.register_type(Service, "service")
+    local.register_type(Ingress, "ingress")
 
     with xcl.Config(registries=[local], **options) as cfg:
         cfg.apply(path)
@@ -638,7 +637,7 @@ func run(dir string) error {
   </div>
   <div slot="python">
 
-```python title="example/configonly/main.py"
+```python
 # run loads the configuration in path, works out its ingress routes and prints
 # one line per route. An error is raised as an exception rather than returned.
 def run(path: str) -> None:
@@ -747,7 +746,7 @@ func findContainerPort(deployment *resources.Deployment, containerPort int) (con
   </div>
   <div slot="python">
 
-```python title="example/configonly/routes.py"
+```python
 # ingress_routes works out a Route for every rule of every ingress, in the
 # order they are declared.
 #
@@ -892,7 +891,7 @@ func TestIngressRoutesReportsEveryIngressPath(t *testing.T) {
   </div>
   <div slot="python">
 
-```python title="example/configonly/test_routes.py"
+```python
 def test_ingress_routes_reports_every_ingress_path():
     cfg = load_config("testdata/routes")
 
@@ -946,7 +945,7 @@ func TestIngressRoutesFailsForUnknownService(t *testing.T) {
   </div>
   <div slot="python">
 
-```python title="example/configonly/test_routes.py"
+```python
 def test_ingress_routes_fails_for_unknown_service():
     cfg = load_config("testdata/unknown_service")
 

@@ -49,7 +49,7 @@ type Secret struct {
   </div>
   <div slot="python">
 
-```python title="example/configonly/resources/resources.py"
+```python
 from dataclasses import dataclass
 
 import xcl
@@ -62,10 +62,10 @@ import xcl
 # As in Kubernetes, nothing else holds a secret's values: a container reads
 # one through a secret_key_ref naming the secret and the key, which are plain
 # strings, so the deployment never becomes sensitive itself.
-@xcl.entity("secret")
 @dataclass
-class Secret(xcl.Resource):
+class Secret:
     data: xcl.Sensitive[dict[str, str]]
+    meta: xcl.Meta | None = None
 ```
 
   </div>
@@ -173,11 +173,14 @@ _, err := xcl.Find[PlainDatabase](c, "database.postgres.main")
   <div slot="python">
 
 ```python
-@xcl.entity("database", "postgres")
 @dataclass
-class PlainDatabase(xcl.Resource):
+class PlainDatabase:
     location: str
     password: str          # plain, so a sensitive value cannot be assigned to it
+    meta: xcl.Meta | None = None
+
+
+local.register_type(PlainDatabase, "database", "postgres")
 
 
 try:

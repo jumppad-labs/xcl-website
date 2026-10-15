@@ -1036,7 +1036,7 @@ per command:
   </div>
   <div slot="python">
 
-```python title="example/plugin/main.py"
+```python
     try:
         match command:
             case "apply":
@@ -1115,7 +1115,7 @@ func newConfig(handler xcl.EventHandler, dockerPlugin, stateDir string) (*xcl.Co
   </div>
   <div slot="python">
 
-```python title="example/plugin/main.py"
+```python
 def new_config(handler, docker_plugin: str, state_dir: str) -> xcl.Config:
     # The local registry holds plugins the application supplies itself: here
     # the external plugin binary. Registering only records a plugin, it is
@@ -1158,7 +1158,7 @@ func eventHandler(out io.Writer) xcl.EventHandler {
   </div>
   <div slot="python">
 
-```python title="example/plugin/main.py"
+```python
 def event_handler(out):
     quiet = os.environ.get("XCL_LOG_LEVEL", "info") != "debug"
 
@@ -1209,7 +1209,7 @@ func applyCommand(stderr io.Writer, configDir, dockerPlugin, stateDir string) er
   </div>
   <div slot="python">
 
-```python title="example/plugin/main.py"
+```python
 def apply_command(stderr, config_dir: str, docker_plugin: str, state_dir: str) -> None:
     # The Docker plugin creates real containers, check an engine answers
     # before applying anything
@@ -1251,7 +1251,7 @@ func planCommand(stdout io.Writer, configDir, dockerPlugin, stateDir string) err
   </div>
   <div slot="python">
 
-```python title="example/plugin/main.py"
+```python
 def plan_command(stdout, config_dir: str, docker_plugin: str, state_dir: str) -> None:
     ping_docker()
 
@@ -1295,7 +1295,7 @@ func plan(out io.Writer, c *xcl.Config, configDir string) error {
   </div>
   <div slot="python">
 
-```python title="example/plugin/plan.py"
+```python
 def plan(out, cfg: xcl.Config, config_dir: str) -> None:
     changes = cfg.diff(config_dir)
 
@@ -1348,7 +1348,7 @@ func statusCommand(stdout io.Writer, dockerPlugin, stateDir string) error {
   </div>
   <div slot="python">
 
-```python title="example/plugin/main.py"
+```python
 def status_command(stdout, docker_plugin: str, state_dir: str) -> None:
     with new_config(None, docker_plugin, state_dir) as cfg:
         cfg.load()
@@ -1382,10 +1382,10 @@ being the only part of it the program imports:
   </div>
   <div slot="python">
 
-```python title="example/plugin/status.py"
+```python
     # Plugin types are held as types generated from the plugin's schema. With
     # None as the class each comes back as an xcl.Entity, a read-only mapping
-    # with .meta, .address and attribute access, i.e. network.subnet
+    # with .meta and attribute access, i.e. network.subnet
     networks = cfg.find_by_type(None, "docker", "network")
 ```
 
@@ -1408,7 +1408,7 @@ A type with no subtype is looked up by its type alone:
   </div>
   <div slot="python">
 
-```python title="example/plugin/status.py"
+```python
     # template has no subtype, so its address has one segment before the name
     templates = cfg.find_by_type(None, "template")
 ```
@@ -1464,7 +1464,7 @@ func inspect(out io.Writer, c *xcl.Config, address string) error {
   </div>
   <div slot="python">
 
-```python title="example/plugin/inspect_entity.py"
+```python
 def inspect(out, cfg: xcl.Config, address: str) -> None:
     try:
         entity = cfg.find(None, address)
@@ -1473,7 +1473,7 @@ def inspect(out, cfg: xcl.Config, address: str) -> None:
 
     # the entity is an xcl.Entity, a read-only mapping of the settings the
     # plugin's schema declares, including the values the provider set
-    print(entity.address, file=out)
+    print(entity.meta.id, file=out)
     for name, value in entity.items():
         print(f"  {name} = {value!r}", file=out)
 ```
@@ -1508,7 +1508,7 @@ func destroyCommand(stderr io.Writer, dockerPlugin, stateDir string) error {
   </div>
   <div slot="python">
 
-```python title="example/plugin/main.py"
+```python
 def destroy_command(stderr, docker_plugin: str, state_dir: str) -> None:
     ping_docker()
 
@@ -1539,7 +1539,7 @@ func explainPluginLoad(err error) error {
   </div>
   <div slot="python">
 
-```python title="example/plugin/main.py"
+```python
 def explain_plugin_load(err: xcl.Error) -> str:
     if isinstance(err, xcl.PluginLoadError):
         return f"{err}, build it with `make build` in example/plugin"
