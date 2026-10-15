@@ -1385,7 +1385,7 @@ being the only part of it the program imports:
 ```python title="example/plugin/status.py"
     # Plugin types are held as types generated from the plugin's schema. With
     # None as the class each comes back as an xcl.Entity, a read-only mapping
-    # with .meta, .address and attribute access, i.e. network.subnet
+    # with .meta and attribute access, i.e. network.subnet
     networks = cfg.find_by_type(None, "docker", "network")
 ```
 
@@ -1473,7 +1473,7 @@ def inspect(out, cfg: xcl.Config, address: str) -> None:
 
     # the entity is an xcl.Entity, a read-only mapping of the settings the
     # plugin's schema declares, including the values the provider set
-    print(entity.address, file=out)
+    print(entity.meta.id, file=out)
     for name, value in entity.items():
         print(f"  {name} = {value!r}", file=out)
 ```

@@ -158,10 +158,10 @@ them. Every block takes `disabled`, `depends_on` and `meta`, so a type
 declares no fields by those names.
 
 A Python class reads the same through its own fields: a field called `meta`,
-an `xcl.Meta | None`, receives the metadata, fields marked
-`xcl.field(label=True)` are filled from the labels, and fields called
-`disabled`, a `bool`, and `depends_on`, a `list[str]`, receive what
-configuration set. None of them is part of the class's schema.
+an `xcl.Meta | None`, receives the metadata, `meta.disabled` and
+`meta.depends_on` among it, and fields marked `xcl.field(label=True)` are
+filled from the labels. Neither is part of the class's schema, and a class
+declares no fields called `disabled` or `depends_on`.
 
 A declared type has no provider, so it is only ever decoded into. It still
 takes part in references, variables and modules, and is read back as your own

@@ -199,12 +199,9 @@ also carries the `disabled` flag and the `depends_on` list configuration set
 on the block, as `Meta.Disabled` and `Meta.DependsOn`. Every block takes
 `disabled`, `depends_on` and `meta`, so a type declares no fields by those
 names; xcl holds them for every entity, beside the type's own fields. In
-Python a class declares what it reads: a field called `meta`, an
-`xcl.Meta | None`, receives the metadata, and `meta.address` is the entity's
-address; fields called `disabled`, a `bool`, and `depends_on`, a `list[str]`,
-receive what configuration set. None of the three is part of the class's
-schema, and configuration sets `disabled` and `depends_on` on any block
-whether the class declares them or not:
+Python the field is called `meta`, an `xcl.Meta | None`, and carries the same,
+`meta.disabled` and `meta.depends_on` among it; it is not part of the class's
+schema:
 
 <CodeTabs>
   <div slot="go">
@@ -236,11 +233,9 @@ type Meta struct {
 class App:
     image: str
 
-    meta: xcl.Meta | None = None  # id, name, type, subtype, module, file, line, column, …
-
-    # set in configuration on any block
-    disabled: bool = False
-    depends_on: list[str] = xcl.field(default_factory=list)
+    # id, the entity's address, name, type, subtype, module, file, line,
+    # column, and disabled and depends_on, set in configuration on any block
+    meta: xcl.Meta | None = None
 ```
 
   </div>
@@ -267,9 +262,8 @@ fmt.Println(app.Meta.DependsOn, app.Meta.Disabled)
 ```python title="main.py"
 app = cfg.find(App, "app.web")
 
-print(app.meta.address)                         # app.web
 print(app.meta.id, app.meta.file, app.meta.line)
-print(app.depends_on, app.disabled)
+print(app.meta.depends_on, app.meta.disabled)
 ```
 
   </div>
