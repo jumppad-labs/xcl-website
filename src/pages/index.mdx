@@ -79,7 +79,9 @@ pip install xcl-lang
 ```go title="resources.go"
 // PostgreSQL defines the block type `database "postgres"`
 type PostgreSQL struct {
-	types.ResourceBase `xcl:",remain"`
+	// The block's labels, its subtype and its name: "postgres" and "main"
+	Engine string `xcl:"engine,label" json:"engine"`
+	Name   string `xcl:"name,label" json:"name"`
 
 	Location string `xcl:"location" json:"location"`
 	Port     int    `xcl:"port" json:"port"`

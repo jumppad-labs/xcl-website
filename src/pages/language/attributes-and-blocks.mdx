@@ -36,7 +36,7 @@ error at the block's position.
 
 ```go title="resources.go"
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image string `xcl:"image" json:"image"`
 }
@@ -74,7 +74,7 @@ and in Go the application decides what an omitted `replicas` means.
 
 ```go title="resources.go"
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image    string `xcl:"image" json:"image"`
 	Replicas int    `xcl:"replicas,optional" json:"replicas,omitempty"`
@@ -125,7 +125,7 @@ type Health struct {
 }
 
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image  string  `xcl:"image" json:"image"`
 	Health *Health `xcl:"health,block" json:"health,omitempty"`
@@ -151,6 +151,50 @@ class App(xcl.Resource):
 
   </div>
 </CodeTabs>
+
+### How deep blocks nest
+
+```hcl title="main.xcl"
+layout "main" {
+  column {
+    width = "60"
+
+    row {
+      height = "50"
+
+      column {
+        width = "30"
+      }
+    }
+  }
+}
+```
+
+A nested block may hold blocks of its own, including blocks of its own type,
+directly or through others: a column holds rows, and a row holds columns.
+Configuration nests blocks at most ten deep within an entity, a block's own
+blocks being one deep. A block nested deeper is an error at that block:
+
+```text
+column is nested 11 blocks deep, and blocks nest at most 10 deep
+```
+
+```go title="resources.go"
+type Column struct {
+	Width string `xcl:"width,optional" json:"width,omitempty"`
+	Rows  []Row  `xcl:"row,block" json:"row,omitempty"`
+}
+
+type Row struct {
+	Height  string   `xcl:"height,optional" json:"height,omitempty"`
+	Columns []Column `xcl:"column,block" json:"column,omitempty"`
+}
+
+type Layout struct {
+	Name    string   `xcl:"name,label" json:"name"`
+	Columns []Column `xcl:"column,block" json:"column,omitempty"`
+}
+```
 
 ## Lists of blocks
 
@@ -187,7 +231,7 @@ type Volume struct {
 }
 
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image   string   `xcl:"image" json:"image"`
 	Volumes []Volume `xcl:"volume,block" json:"volumes,omitempty"`
@@ -253,7 +297,7 @@ type Listener struct {
 }
 
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image     string              `xcl:"image" json:"image"`
 	Listeners map[string]Listener `xcl:"listener,block" json:"listeners,omitempty"`
@@ -305,7 +349,7 @@ value rather than a block of its own, and a map has no order.
 
 ```go title="resources.go"
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image  string            `xcl:"image" json:"image"`
 	Labels map[string]string `xcl:"labels,optional" json:"labels,omitempty"`
@@ -352,7 +396,7 @@ type Endpoint struct {
 }
 
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image           string   `xcl:"image" json:"image"`
 	DefaultEndpoint Endpoint `xcl:"default_endpoint,optional" json:"default_endpoint,omitempty"`
@@ -379,6 +423,33 @@ class App(xcl.Resource):
   </div>
 </CodeTabs>
 
+## Attributes of any value
+
+```hcl title="main.xcl"
+app "web" {
+  image = "nginx:1.27"
+
+  settings = {
+    retries = 3
+    region  = "eu"
+  }
+}
+```
+
+A field of type `any` takes whatever the attribute's expression evaluates to,
+as plain data: an object becomes a `map[string]any`, a list a `[]any`, a number
+a `float64`, alongside strings and bools. Another block can read it like any
+attribute, `app.web.settings.region`.
+
+```go title="resources.go"
+type App struct {
+	Name string `xcl:"name,label" json:"name"`
+
+	Image    string `xcl:"image" json:"image"`
+	Settings any    `xcl:"settings,optional" json:"settings,omitempty"`
+}
+```
+
 ## Computed fields
 
 ```hcl title="main.xcl"
@@ -401,7 +472,7 @@ In Python the annotation `xcl.Computed[T]` marks the field.
 
 ```go title="resources.go"
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image    string `xcl:"image" json:"image"`
 	Endpoint string `xcl:"endpoint,optional,computed" json:"endpoint,omitempty"`
@@ -442,7 +513,7 @@ redacted, so `reveal()` returns `None`. See [Sensitive values](/sensitive-values
 
 ```go title="resources.go"
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image string                  `xcl:"image" json:"image"`
 	Token types.Sensitive[string] `xcl:"token,optional" json:"token,omitempty"`
@@ -465,15 +536,14 @@ class App(xcl.Resource):
 
 ## The entity base
 
-Every entity type builds on the same base. In Go it embeds
-`types.ResourceBase` with the `xcl:",remain"` tag, which gives it
-`depends_on`, `disabled` and `meta`; in Python it subclasses `xcl.Resource`.
-A type an application declares on its own registry may instead be a plain
-struct, without the embedding: xcl keeps the base for it, a field called
-`Meta`, a `types.Meta` with no tag, receives a copy of the metadata, fields
-tagged `disabled` or `depends_on` receive those values, and fields tagged as
-labels, such as `xcl:"name,label"`, are filled from the block's labels. A
-type served by a plugin always embeds the base. See
+Every entity has the same base, `depends_on`, `disabled` and `meta`, which xcl
+holds for it beside the type's own fields. In Go a type is a plain struct: a
+field tagged as a label, such as `xcl:"name,label"`, is filled from the
+block's labels, and a field called `Meta`, a `types.Meta` with no tag,
+receives a copy of the metadata, with `Meta.Disabled` and `Meta.DependsOn`
+among it. A type declares no fields called `depends_on`, `disabled` or
+`meta`, and does not embed `types.ResourceBase`, which xcl refuses when the
+type is registered. In Python it subclasses `xcl.Resource`. See
 [Built-in fields](/language/entities/#built-in-fields). Put together, the
 `app` type this page has built is:
 
@@ -482,7 +552,7 @@ type served by a plugin always embeds the base. See
 
 ```go title="resources.go"
 type App struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image           string                  `xcl:"image" json:"image"`
 	Replicas        int                     `xcl:"replicas,optional" json:"replicas,omitempty"`
@@ -517,11 +587,10 @@ class App(xcl.Resource):
   </div>
 </CodeTabs>
 
-Types that share fields share them through the base too. In Go, put the
-common fields in a struct that embeds `types.ResourceBase`, and embed that
-struct, again with `xcl:",remain"`, in each type. A plain struct embeds a
-struct of common fields the same way, with `xcl:",remain"`, and its fields are
-read as the plain struct's own. In Python, put them in a
+Types that share fields share them through a struct of their own. In Go, put
+the common fields in a struct and embed it in each type with
+`xcl:",remain"`; its fields are read as the type's own, its label fields and
+`Meta` field included. In Python, put them in a
 dataclass that subclasses `xcl.Resource` and subclass it; the base must
 itself be a dataclass, and only the registered class carries `@xcl.entity`.
 A subclass that adds a required field after the base's defaulted ones is
@@ -532,7 +601,7 @@ declared `@dataclass(kw_only=True)`, as the dataclass rules require.
 
 ```go title="resources.go"
 type Workload struct {
-	types.ResourceBase `xcl:",remain"`
+	Name string `xcl:"name,label" json:"name"`
 
 	Image    string `xcl:"image" json:"image"`
 	Replicas int    `xcl:"replicas,optional" json:"replicas,omitempty"`

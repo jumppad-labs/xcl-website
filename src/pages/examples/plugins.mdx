@@ -148,10 +148,14 @@ template "welcome" {
 
 ## The types
 
-The Docker plugin's block types are Go structs embedding `types.ResourceBase`.
-A plugin's types can also be plain structs, laid out as an application's are,
-with a label field and a `Meta` field where they want them; one with neither is
-a [singleton](/language/entities/#singletons). The Docker plugin keeps its
+The Docker plugin's block types are plain Go structs, laid out as an
+application's are: each has a `Meta` field, which receives the block's
+metadata, its name among it. A type reads its labels through label fields or
+`Meta`, and one with neither is a
+[singleton](/language/entities/#singletons). The plugin describes each type to
+xcl from its tags, so every field carries an `xcl` tag, its `json` name is its
+`xcl` name, and a computed field is also optional; a type that breaks one of
+these fails to register, with an error naming the field. The Docker plugin keeps its
 block types in a package of their own, `entities`, which
 holds no providers and imports no Docker library, so a program can import it
 to read back the blocks it applied without pulling in the plugin. The container
@@ -165,7 +169,7 @@ entry for each `network` block the container has, and its optional
 // Container defines the block type docker "container", a Docker container
 // named after the block
 type Container struct {
-	types.ResourceBase `xcl:",remain"`
+	Meta types.Meta
 
 	// Image is the image the container runs, it is pulled when Docker does
 	// not have it
@@ -912,7 +916,8 @@ nginx image only runs an executable script from its entrypoint directory.
 // Template defines the block type template, a Handlebars template rendered to
 // a file
 type Template struct {
-	types.ResourceBase `xcl:",remain"`
+	// Meta is the block's metadata, which the status view reads
+	Meta types.Meta
 
 	// Source is the Handlebars template text, use file() to read it from a
 	// file

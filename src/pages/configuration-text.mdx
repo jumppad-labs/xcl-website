@@ -25,13 +25,15 @@ can colour the text it writes, for a terminal or any other format.
 
 ## Converting an entity
 
-Pass any entity a lookup returns:
+Pass an entity as the configuration holds it, as `FindResource`, `Entities` and
+`FindEntitiesByType` return it. A copy `Find[T]` returns is your own plain
+struct, which does not say what it was declared as, and is refused:
 
 <CodeTabs>
   <div slot="go">
 
 ```go title="main.go"
-db, err := xcl.Find[*Postgres](c, "database.postgres.main")
+db, err := c.FindResource("database.postgres.main")
 if err != nil {
 	return err
 }

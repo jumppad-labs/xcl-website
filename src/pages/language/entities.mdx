@@ -89,9 +89,8 @@ type alone, `runner`, so `runner.server` reads its `server`.
 
 Whether a type is a singleton follows from whether it can read a name. A type
 reads its name through a label field, or through the entity's metadata: in Go
-a field called `Meta` or an embedded `types.ResourceBase`, in Python
-`xcl.Resource`. A type with neither is a singleton. A singleton takes no
-subtype.
+a field called `Meta`, in Python `xcl.Resource`. A type with neither is a
+singleton. A singleton takes no subtype.
 
 <CodeTabs>
   <div slot="go">
@@ -185,23 +184,34 @@ docker "container" "web" {
 | `meta.line` | the line the block starts on |
 | `meta.column` | the column the block starts at |
 
-In code these fields live on the base every entity type builds on. In Go it
-is `types.ResourceBase`, embedded with the `xcl:",remain"` tag so that
-`depends_on`, `disabled` and `meta` are decoded alongside the type's own
-fields. A declared type can instead be a plain struct: xcl keeps the base for
-it, and a field called `Meta`, a `types.Meta` with no tag, receives a copy of
-the metadata, while fields tagged `disabled` or `depends_on` receive those
-values. In Python it is `xcl.Resource`, which also gives the entity an
-`address` property:
+In Go a type reads these fields through a field called `Meta`, a
+`types.Meta` with no tag, which receives a copy of the entity's metadata. It
+also carries the `disabled` flag and the `depends_on` list configuration set
+on the block, as `Meta.Disabled` and `Meta.DependsOn`. Every block takes
+`disabled`, `depends_on` and `meta`, so a type declares no fields by those
+names; xcl holds them for every entity, beside the type's own fields. In
+Python it is `xcl.Resource`, which also gives the entity an `address`
+property:
 
 <CodeTabs>
   <div slot="go">
 
 ```go title="types/resource.go"
-type ResourceBase struct {
-	DependsOn []string `xcl:"depends_on,optional" json:"depends_on,omitempty"`
-	Disabled  bool     `xcl:"disabled,optional" json:"disabled,omitempty"`
-	Meta      Meta     `xcl:"meta,optional" json:"meta,omitempty"`
+type Meta struct {
+	ID      string // the entity's address
+	Name    string // its name label
+	Type    string
+	Subtype string
+	Module  string
+	File    string
+	Line    int
+	Column  int
+
+	// set in configuration on any block
+	Disabled  bool
+	DependsOn []string
+
+	// …
 }
 ```
 
@@ -231,6 +241,7 @@ if err != nil {
 }
 
 fmt.Println(app.Meta.ID, app.Meta.File, app.Meta.Line)
+fmt.Println(app.Meta.DependsOn, app.Meta.Disabled)
 ```
 
   </div>
