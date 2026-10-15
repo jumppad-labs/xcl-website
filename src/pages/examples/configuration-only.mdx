@@ -116,7 +116,7 @@ type Container struct {
   </div>
   <div slot="python">
 
-```python title="example/configonly/resources/resources.py"
+```python
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -287,7 +287,7 @@ type Rule struct {
   </div>
   <div slot="python">
 
-```python title="example/configonly/resources/resources.py"
+```python
 # Service defines the block type `service`, it routes traffic to the
 # containers of a deployment.
 #
@@ -544,7 +544,7 @@ func loadConfig(dir string, options ...xcl.ConfigOption) (*appConfig, error) {
 
 `Decode` has no Python form, so the Python program fills its own dataclass with one `all` call per block type it reads.
 
-```python title="example/configonly/main.py"
+```python
 import sys
 from dataclasses import dataclass
 
@@ -637,7 +637,7 @@ func run(dir string) error {
   </div>
   <div slot="python">
 
-```python title="example/configonly/main.py"
+```python
 # run loads the configuration in path, works out its ingress routes and prints
 # one line per route. An error is raised as an exception rather than returned.
 def run(path: str) -> None:
@@ -746,7 +746,7 @@ func findContainerPort(deployment *resources.Deployment, containerPort int) (con
   </div>
   <div slot="python">
 
-```python title="example/configonly/routes.py"
+```python
 # ingress_routes works out a Route for every rule of every ingress, in the
 # order they are declared.
 #
@@ -891,7 +891,7 @@ func TestIngressRoutesReportsEveryIngressPath(t *testing.T) {
   </div>
   <div slot="python">
 
-```python title="example/configonly/test_routes.py"
+```python
 def test_ingress_routes_reports_every_ingress_path():
     cfg = load_config("testdata/routes")
 
@@ -945,7 +945,7 @@ func TestIngressRoutesFailsForUnknownService(t *testing.T) {
   </div>
   <div slot="python">
 
-```python title="example/configonly/test_routes.py"
+```python
 def test_ingress_routes_fails_for_unknown_service():
     cfg = load_config("testdata/unknown_service")
 

@@ -359,7 +359,7 @@ func Handler(w io.Writer, level slog.Level) xcl.EventHandler {
   </div>
   <div slot="python">
 
-```python title="example/prettylog/prettylog.py"
+```python
 import os
 from typing import Callable, TextIO
 
@@ -419,7 +419,7 @@ when it is unset:
   </div>
   <div slot="python">
 
-```python title="example/plugin/main.py"
+```python
     return prettylog.handler(out, prettylog.level_from_env())
 ```
 

@@ -31,7 +31,7 @@ registry to the `Config` like any other:
 
 ```go title="main.go"
 gh := registry.NewGitHub()
-gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "v1.2.0")
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "v0.3.0")
 
 c, err := xcl.NewConfig(
 	xcl.WithRegistry(local), // your own types and plugins
@@ -47,7 +47,7 @@ if err != nil {
 
 ```python title="main.py"
 github = xcl.GitHubRegistry()
-github.register_plugin("jumppad-labs/xcl-plugin-docker", "v1.2.0")
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.3.0")
 
 with xcl.Config(
     registries=[
@@ -70,7 +70,7 @@ cache, at the start of the first `Validate`, `Apply`, `Destroy`, `Diff` or
 ## Pinning a version
 
 A plugin is pinned to one exact release tag: `v<major>.<minor>.<patch>`, with
-an optional pre-release suffix such as `v1.2.0-rc.1`. There is no `latest` and
+an optional pre-release suffix such as `v0.3.0-rc.1`. There is no `latest` and
 no range, so the same configuration always runs the same plugin, and nothing
 checks for newer releases. A wrong declaration is a programmer error and
 panics at the `RegisterPlugin` line, naming the plugin, before anything is
@@ -81,9 +81,9 @@ downloaded:
 
 ```go title="main.go"
 gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "latest") // panics
-gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "~1.2")   // panics
-gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "1.2.0")  // panics, the tag has a v
-gh.RegisterPlugin("xcl-plugin-docker", "v1.2.0")              // panics, not owner/repo
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "~0.3")   // panics
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "0.3.0")  // panics, the tag has a v
+gh.RegisterPlugin("xcl-plugin-docker", "v0.3.0")              // panics, not owner/repo
 ```
 
   </div>
@@ -91,9 +91,9 @@ gh.RegisterPlugin("xcl-plugin-docker", "v1.2.0")              // panics, not own
 
 ```python title="main.py"
 github.register_plugin("jumppad-labs/xcl-plugin-docker", "latest")  # fatal when the Config is created
-github.register_plugin("jumppad-labs/xcl-plugin-docker", "~1.2")    # fatal
-github.register_plugin("jumppad-labs/xcl-plugin-docker", "1.2.0")   # fatal, the tag has a v
-github.register_plugin("xcl-plugin-docker", "v1.2.0")               # fatal, not owner/repo
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "~0.3")    # fatal
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "0.3.0")   # fatal, the tag has a v
+github.register_plugin("xcl-plugin-docker", "v0.3.0")               # fatal, not owner/repo
 ```
 
 In Python, `register_plugin` only records the declaration. The same rule is
@@ -110,18 +110,18 @@ Draft releases are never installed.
 ## What a release must contain
 
 The registry installs exactly the layout the plugin template publishes, and
-nothing else. For a repository called `xcl-plugin-docker` at `v1.2.0`:
+nothing else. For a repository called `xcl-plugin-docker` at `v0.3.0`:
 
-- one archive per platform, `xcl-plugin-docker_1.2.0_<os>_<arch>.tar.gz`,
+- one archive per platform, `xcl-plugin-docker_0.3.0_<os>_<arch>.tar.gz`,
   or `.zip` for `windows`, for linux, darwin and windows on amd64 and arm64.
   A release may leave a platform out; installing on that platform then fails
   saying there is no build for it.
 - the plugin binary at the root of each archive, `xcl-plugin-docker`, or
   `xcl-plugin-docker.exe` on windows.
-- `xcl-plugin-docker_1.2.0_checksums.txt`, the SHA-256 of every archive in
+- `xcl-plugin-docker_0.3.0_checksums.txt`, the SHA-256 of every archive in
   the format `sha256sum` writes. It is required: a release without it, or an
   archive that is not listed or does not match, is refused.
-- optionally `xcl-plugin-docker_1.2.0_checksums.txt.sig`, an ASCII-armoured
+- optionally `xcl-plugin-docker_0.3.0_checksums.txt.sig`, an ASCII-armoured
   detached OpenPGP signature over the checksums file.
 
 The plugin template's `make dist` and release workflow produce all of this
@@ -205,10 +205,10 @@ Installed plugins are kept under the xcl home directory, in
 `~/.xcl/cache/plugins`, one entry per repository, version and platform:
 
 ```text
-~/.xcl/cache/plugins/github.com/jumppad-labs/xcl-plugin-docker/v1.2.0/linux_arm64/
-  xcl-plugin-docker_1.2.0_linux_arm64.tar.gz
-  xcl-plugin-docker_1.2.0_checksums.txt
-  xcl-plugin-docker_1.2.0_checksums.txt.sig
+~/.xcl/cache/plugins/github.com/jumppad-labs/xcl-plugin-docker/v0.3.0/linux_arm64/
+  xcl-plugin-docker_0.3.0_linux_arm64.tar.gz
+  xcl-plugin-docker_0.3.0_checksums.txt
+  xcl-plugin-docker_0.3.0_checksums.txt.sig
   xcl-plugin-docker
 ```
 
