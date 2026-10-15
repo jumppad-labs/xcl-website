@@ -40,7 +40,9 @@ also keeps the lines of source around the fault, read when the problem was
 found, so showing them never opens the file again.
 
 Every problem an operation finds is reported this way, one diagnostic per
-problem: syntax errors, attributes and blocks the schema does not allow,
+problem: syntax errors, a block with the wrong labels for its type or
+declaring an entity another block already declares, attributes and blocks
+the schema does not allow,
 values of the wrong type, references to something defined nowhere, a `.vars`
 file that is not well formed, and a provider that fails during apply or
 destroy, placed at the block of the entity it failed for. A problem with a

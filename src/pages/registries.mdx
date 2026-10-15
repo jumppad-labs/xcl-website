@@ -76,12 +76,15 @@ and nothing is started, checked or searched until it is needed; see
 
 `registry.Register[T]` declares the Go type `T` as a block type on a
 registry, under a name made of the block type and an optional subtype. `T` is
-a plain struct of the application's own, or a struct embedding
-`types.ResourceBase` as a plugin's types do. It works on every supported Go
-version; on Go 1.27 the same is also a method, `local.Register[T]("deployment")`,
-and `RegisterType(&T{}, ...)` takes a pointer to a value instead, for a type
-only known at run time. In Python the name is given by `@xcl.entity` on a
-dataclass subclassing `xcl.Resource`, and `register_type` takes the class:
+a plain struct of the application's own; one embedding `types.ResourceBase`
+is refused. A plain struct with neither label fields nor a `Meta`
+field cannot read a name, so it is a
+[singleton](/language/entities/#singletons), written without labels. It works
+on every supported Go version; on Go 1.27 the same is also a method,
+`local.Register[T]("deployment")`, and `RegisterType(&T{}, ...)` takes a
+pointer to a value instead, for a type only known at run time. In Python the
+name is given by `@xcl.entity` on a dataclass, subclassing `xcl.Resource` or
+with a label field, and `register_type` takes the class:
 
 <CodeTabs>
   <div slot="go">
@@ -141,18 +144,22 @@ with xcl.Config(registries=[local]) as cfg:
 </CodeTabs>
 
 A plain struct needs no xcl type of its own. A field called `Meta`, which must
-be a `types.Meta` with no tag, receives a copy of the block's metadata. Fields
-tagged as labels are filled from the block's labels, the subtype and the name
-for a type with a subtype, or the name alone for one without, and are read in
-expressions like an attribute, such as `database.postgres.main.name`;
-configuration cannot set them. A field tagged `disabled` (a `bool`) or
-`depends_on` (a `[]string`) receives the values every block has.
+be a `types.Meta` with no tag, receives a copy of the block's metadata,
+including the `disabled` flag and `depends_on` list configuration set on the
+block, as `Meta.Disabled` and `Meta.DependsOn`. Fields tagged as labels are
+filled from the block's labels, the subtype and the name for a type with a
+subtype, or the name alone for one without, and are read in expressions like
+an attribute, such as `database.postgres.main.name`; configuration cannot set
+them. Every block takes `disabled`, `depends_on` and `meta`, so a type
+declares no fields by those names.
 
 A declared type has no provider, so it is only ever decoded into. It still
 takes part in references, variables and modules, and is read back as your own
 Go type with `Find[T]`, `FindByType[T]` or `Decode`, or in Python as your own
-class with `cfg.find`, `cfg.find_by_type` or `cfg.all`. Every type a
-configuration uses must be declared, even the ones the program never reads.
+class with `cfg.find`, `cfg.find_by_type` or `cfg.all`. Each of them returns
+a copy: changing it leaves the configuration as it is, which only
+configuration and a provider's results set. Every type a configuration uses
+must be declared, even the ones the program never reads.
 
 `NewConfig` reads the declared types of every registry once, when the
 `Config` is created, and returns an error when they do not fit together; see
@@ -328,8 +335,9 @@ name, more than one subtype, an empty subtype, a prototype that is not a
 pointer to a struct, or a plain struct xcl cannot lay out: one declaring an
 attribute called `meta`, a `Meta` field that is not a `types.Meta` or a
 `types.Meta` under another name, a `disabled` or `depends_on` field of the
-wrong type, or label fields that are not strings or do not match the block's
-labels. `Register` also panics for a `T` that is not a struct.
+wrong type, label fields that are not strings or do not match the block's
+labels, or a subtype for a singleton. `Register` also panics for a `T` that is
+not a struct.
 `RegisterPlugin` panics for a nil plugin, and `WithRegistry` for a nil
 registry.
 
@@ -479,8 +487,8 @@ type Type struct {
 	// Subtype is the subtype, empty for a type declared without one
 	Subtype string
 
-	// Prototype is a pointer to a struct, embedding types.ResourceBase or
-	// plain, blocks of the type are decoded into new values of its Go type
+	// Prototype is a pointer to a plain struct, blocks of the type are
+	// decoded into new values of its Go type
 	Prototype any
 }
 

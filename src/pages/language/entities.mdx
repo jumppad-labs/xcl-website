@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/Shell.astro
 title: "Entities - xcl"
-description: "An XCL entity is declared by a block: its type, optional subtype and name, the address other blocks refer to it by, the depends_on, disabled and meta fields every entity has, and where entity types come from."
+description: "An XCL entity is declared by a block: its type, optional subtype and name, singletons written without labels, the address other blocks refer to it by, the depends_on, disabled and meta fields every entity has, and where entity types come from."
 ---
 import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
@@ -66,10 +66,67 @@ class App(xcl.Resource):
   </div>
 </CodeTabs>
 
+A block written with too few or too many labels is reported at the block,
+saying which labels its type takes: `app takes a label: write it as app
+"<label>" { … }.`
+
+Each entity is declared once. A second block with the same labels, in the same
+file or another file of the configuration, is an error naming where the first
+one is.
+
+## Singletons
+
+```hcl title="main.xcl"
+runner {
+  server = "https://maalstrom.app"
+  listen = "127.0.0.1:7660"
+}
+```
+
+A type of which there is one is written without labels. It is a
+**singleton**: a module holds at most one of it, and it is addressed by its
+type alone, `runner`, so `runner.server` reads its `server`.
+
+Whether a type is a singleton follows from whether it can read a name. A type
+reads its name through a label field, or through the entity's metadata: in Go
+a field called `Meta`, in Python `xcl.Resource`. A type with neither is a
+singleton. A singleton takes no subtype.
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="main.go"
+type Runner struct {
+	Server string `xcl:"server"`
+	Listen string `xcl:"listen,optional"`
+}
+
+registry.Register[Runner](local, "runner") // runner {}
+```
+
+  </div>
+  <div slot="python">
+
+```python title="resources.py"
+@xcl.entity("runner")  # runner {}
+@dataclass
+class Runner:
+    server: str
+    listen: str = ""
+```
+
+  </div>
+</CodeTabs>
+
+A singleton written with a label is reported at the label: `runner takes no
+labels, there is one of it: write it as runner { … }, without "nas".` The same
+holds for a plugin's types.
+
 ## Addresses
 
 An entity's address is its labels joined with dots: `database.postgres.main`
-and `app.web`. The address is what a reference starts with, so
+and `app.web`, or its type alone for a singleton, `runner`. The address is
+what a reference starts with, so
 `database.postgres.main.location` reads the first block's `location`, and it
 is what the application passes to `xcl.Find[T]` or `cfg.find`.
 
@@ -118,8 +175,8 @@ docker "container" "web" {
 
 | Field | Value |
 |---|---|
-| `meta.id` | the entity's address, such as `config_map.api` |
-| `meta.name` | the name label, such as `api` |
+| `meta.id` | the entity's address, such as `config_map.api`, or `runner` for a singleton |
+| `meta.name` | the name label, such as `api`, empty for a singleton |
 | `meta.type` | the type keyword, such as `config_map` |
 | `meta.subtype` | the subtype label, empty for a type without one |
 | `meta.module` | the name of the module the entity was declared in, empty at the root |
@@ -127,23 +184,34 @@ docker "container" "web" {
 | `meta.line` | the line the block starts on |
 | `meta.column` | the column the block starts at |
 
-In code these fields live on the base every entity type builds on. In Go it
-is `types.ResourceBase`, embedded with the `xcl:",remain"` tag so that
-`depends_on`, `disabled` and `meta` are decoded alongside the type's own
-fields. A declared type can instead be a plain struct: xcl keeps the base for
-it, and a field called `Meta`, a `types.Meta` with no tag, receives a copy of
-the metadata, while fields tagged `disabled` or `depends_on` receive those
-values. In Python it is `xcl.Resource`, which also gives the entity an
-`address` property:
+In Go a type reads these fields through a field called `Meta`, a
+`types.Meta` with no tag, which receives a copy of the entity's metadata. It
+also carries the `disabled` flag and the `depends_on` list configuration set
+on the block, as `Meta.Disabled` and `Meta.DependsOn`. Every block takes
+`disabled`, `depends_on` and `meta`, so a type declares no fields by those
+names; xcl holds them for every entity, beside the type's own fields. In
+Python it is `xcl.Resource`, which also gives the entity an `address`
+property:
 
 <CodeTabs>
   <div slot="go">
 
 ```go title="types/resource.go"
-type ResourceBase struct {
-	DependsOn []string `xcl:"depends_on,optional" json:"depends_on,omitempty"`
-	Disabled  bool     `xcl:"disabled,optional" json:"disabled,omitempty"`
-	Meta      Meta     `xcl:"meta,optional" json:"meta,omitempty"`
+type Meta struct {
+	ID      string // the entity's address
+	Name    string // its name label
+	Type    string
+	Subtype string
+	Module  string
+	File    string
+	Line    int
+	Column  int
+
+	// set in configuration on any block
+	Disabled  bool
+	DependsOn []string
+
+	// …
 }
 ```
 
@@ -173,6 +241,7 @@ if err != nil {
 }
 
 fmt.Println(app.Meta.ID, app.Meta.File, app.Meta.Line)
+fmt.Println(app.Meta.DependsOn, app.Meta.Disabled)
 ```
 
   </div>
