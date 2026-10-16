@@ -19,9 +19,12 @@ import { pythonParityURL } from "../config/site";
 
 Showing someone what a configuration holds is easiest in the syntax they
 wrote it in. `xcl.EncodeEntity` turns one entity back into configuration text,
-and the Config's `EncodeSavedEntity` does the same from its saved data. Both write
-exactly one block, so convert several entities by calling once for each. Either
-can colour the text it writes, for a terminal or any other format.
+and the Config's `EncodeSavedEntity` does the same from its saved data. In
+Python the two are `cfg.encode_entity` and `cfg.encode_saved_entity`, and the
+engine renders the text, so Python and Go write identical text for the same
+entity. Both write exactly one block, so convert several entities by calling
+once for each. Either can colour the text it writes, for a terminal or any
+other format.
 
 ## Converting an entity
 
@@ -49,7 +52,13 @@ fmt.Println(string(text))
   </div>
   <div slot="python">
 
-Converting a live entity to text is not yet available from Python. Python renders a saved record instead, with `cfg.encode_saved_entity`, shown under [Converting saved data](#converting-saved-data). See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python title="main.py"
+db = cfg.find(PostgreSQL, "database.postgres.main")
+
+print(cfg.encode_entity(db))
+```
+
+With `xcl.aio.Config` the call is `await cfg.encode_entity(db)`. Any entity a lookup returns works, as does an instance of a registered class you built yourself, and the `xcl.Entity` a lookup returns for a plugin's type. A field you change on a looked-up entity shows in the text.
 
   </div>
 </CodeTabs>
@@ -91,7 +100,7 @@ text, err := c.EncodeSavedEntity(event.Data)
 text = cfg.encode_saved_entity(event.data)
 ```
 
-Here `event` is the `xcl.Event` an `on_event` handler receives, and `event.data` holds the saved record when the Config was created with `event_data="processed"`. With `xcl.aio.Config` the call is `await cfg.encode_saved_entity(event.data)`.
+It takes the same keyword choices as `cfg.encode_entity`, such as `cfg.encode_saved_entity(event.data, include_computed=True)`. Here `event` is the `xcl.Event` an `on_event` handler receives, and `event.data` holds the saved record when the Config was created with `event_data="processed"`. With `xcl.aio.Config` the call is `await cfg.encode_saved_entity(event.data)`.
 
   </div>
 </CodeTabs>
@@ -126,9 +135,11 @@ text, err := xcl.EncodeEntity(entity)
 entity = event.entity()
 if entity is None:
     return
+
+text = cfg.encode_entity(entity)
 ```
 
-Python has no `EncodeEntity`, so turning the entity into text still goes through the Config, with `cfg.encode_saved_entity(event.data)`.
+An event entity kept and encoded after its operation has finished shows the engine's current value with `reveal_sensitive=True`, where Go's event data always shows the marker.
 
   </div>
 </CodeTabs>
@@ -149,7 +160,9 @@ text, err := xcl.EncodeEntity(db, xcl.IncludeComputed())
   </div>
   <div slot="python">
 
-The `IncludeComputed` option has no Python form; `cfg.encode_saved_entity` renders the saved record as it is, without provider-filled values. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python
+text = cfg.encode_entity(db, include_computed=True)
+```
 
   </div>
 </CodeTabs>
@@ -162,6 +175,30 @@ database "postgres" "main" {
 }
 ```
 
+## Empty attributes
+
+An optional attribute left unset, or set to its zero value, is left out by
+default. Ask for `xcl.IncludeEmpty()` and each one is written with the empty
+value of its type: `""` for a string, `[]` for a list, `{}` for a map, and
+the zero value of the type a nullable attribute holds:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+text, err := xcl.EncodeEntity(db, xcl.IncludeEmpty())
+```
+
+  </div>
+  <div slot="python">
+
+```python
+text = cfg.encode_entity(db, include_empty=True)
+```
+
+  </div>
+</CodeTabs>
+
 ## Sensitive values
 
 A sensitive value is written as the marker `"(sensitive)"`. Pass
@@ -169,6 +206,25 @@ A sensitive value is written as the marker `"(sensitive)"`. Pass
 rather than the value, so text made from event data shows the marker even when
 revealing is asked for. See [Sensitive values](/sensitive-values/) for
 declaring a field sensitive.
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+text, err := xcl.EncodeEntity(db, xcl.RevealSensitive())
+```
+
+  </div>
+  <div slot="python">
+
+```python
+text = cfg.encode_entity(db, reveal_sensitive=True)
+```
+
+A looked-up entity holds only the marker, so the engine writes its own configured value. A value the entity holds for real, such as one you changed or one set on an instance you built yourself, is written as it is. An event entity kept until after its operation shows the engine's current value, unlike Go's event data.
+
+  </div>
+</CodeTabs>
 
 ## Dependency lists
 
@@ -228,7 +284,11 @@ text, err := xcl.EncodeEntity(app, xcl.ShowReferences())
   </div>
   <div slot="python">
 
-Showing references as written is not yet available from Python; `cfg.encode_saved_entity` writes the resolved values. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python
+text = cfg.encode_entity(app, show_references=True)
+```
+
+An instance you built yourself has no references, so its values are written as they are.
 
   </div>
 </CodeTabs>
@@ -296,10 +356,10 @@ os.Stdout.Write(highlight.ANSI.Render(highlight.Pieces(text)))
   <div slot="python">
 
 ```python
-print(cfg.encode_saved_entity(event.data, highlight=True))
+print(cfg.encode_entity(entity, highlight=True))
 ```
 
-`highlight=True` uses the terminal renderer with no theme.
+`highlight=True` uses the terminal renderer with no theme, and `cfg.encode_saved_entity(event.data, highlight=True)` colours a saved record the same way. It combines with every other choice.
 
   </div>
 </CodeTabs>
@@ -326,7 +386,7 @@ os.Stdout.Write(renderer.Render(highlight.Pieces(text)))
 ```python
 import sys
 
-text = cfg.encode_saved_entity(event.data, highlight=sys.stdout.isatty())
+text = cfg.encode_entity(entity, highlight=sys.stdout.isatty())
 ```
 
   </div>
@@ -360,7 +420,7 @@ if errors.Is(err, xcl.ErrInvalidTheme) {
   </div>
   <div slot="python">
 
-Editor themes are not yet available from Python; `cfg.encode_saved_entity` offers `highlight=True` only, with the terminal's 16 standard colours. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+Editor themes are not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only, with the terminal's 16 standard colours. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
 
   </div>
 </CodeTabs>
@@ -407,7 +467,7 @@ page := renderer.Render(highlight.Pieces(text))
   </div>
   <div slot="python">
 
-Writing a renderer is not yet available from Python; `cfg.encode_saved_entity` offers `highlight=True` only. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+Writing a renderer is not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
 
   </div>
 </CodeTabs>
