@@ -210,7 +210,10 @@ value with `mask.Unmask(data, m)`; anything it cannot open faithfully, such as
 a hash, data from a different masker or data under a different key, fails with
 `xcl.ErrUnrecoverable` and returns no value. `Event.Entity()` and
 `c.EncodeSavedEntity`, `event.entity()` and `cfg.encode_saved_entity` in
-Python, show every masked value as `(sensitive)`.
+Python, show every masked value as `(sensitive)`. In Python,
+`cfg.encode_entity(event.entity())` turns the entity an event carries into
+configuration text directly; with `reveal_sensitive=True` it shows the
+engine's current value, not the masked one, once the operation has finished.
 
 To keep secrets out of the state file as well, see
 [State masking](/state-masking/).
