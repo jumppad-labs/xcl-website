@@ -1031,6 +1031,16 @@ per command:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", command, usage)
 		return 2
 	}
+
+	if err != nil {
+		// a configuration problem is printed as a report with the lines at
+		// fault, anything else as its message, coloured as the rest of the
+		// example's output is
+		xcl.PrintError(stderr, err, xcl.WithFormatter(formatterFor(stderr)))
+		return 1
+	}
+
+	return 0
 ```
 
   </div>
@@ -1070,8 +1080,17 @@ per command:
         return 1
 ```
 
+Python prints every error as its message on one line. Printing a configuration problem as a report is not yet available from Python; richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a>.
+
   </div>
 </CodeTabs>
+
+A command that fails returns its error, and `run` prints it to standard error
+with `xcl.PrintError`. A problem in the configuration, however the command
+wrapped it, is printed as a report: its summary, where it is, the numbered
+lines around it and its detail. Any other error, such as Docker not running,
+is printed as its message alone. `formatterFor`, shown with `inspect` below,
+colours the report when standard error is a terminal.
 
 Every command builds its `Config` the same way. Plugins come from a
 registry, and the example uses the local registry, which holds the plugins an
@@ -1264,10 +1283,10 @@ def plan_command(stdout, config_dir: str, docker_plugin: str, state_dir: str) ->
 
 `plan` hands the configuration's path to `Config.Diff`, which compares it with
 the state and returns the changes without creating, changing or saving
-anything. `changes.Pieces()` lays them out as text, a block per changed
-entity and a summary line, and a renderer writes it. As in `inspect`, below,
-colour is decided for the writer itself, so `highlight.ANSI` renders it only
-when the output is a terminal and `highlight.Text` otherwise:
+anything. `xcl.PrintDiff` prints them as text, a block per changed entity and
+a summary line. As in `inspect`, below, colour is decided for the writer
+itself: `formatterFor` picks `highlight.Terminal` only when the output is a
+terminal and `highlight.Plain` otherwise:
 
 <CodeTabs>
   <div slot="go">
@@ -1281,14 +1300,7 @@ func plan(out io.Writer, c *xcl.Config, configDir string) error {
 
 	// as with inspect, colour is decided for out itself, so a plan written to
 	// a file or a pipe is plain text
-	var renderer highlight.Renderer = highlight.Text
-	if lipgloss.NewRenderer(out).ColorProfile() != termenv.Ascii {
-		renderer = highlight.ANSI
-	}
-
-	_, err = out.Write(renderer.Render(changes.Pieces()))
-
-	return err
+	return xcl.PrintDiff(out, changes, xcl.WithFormatter(formatterFor(out)))
 }
 ```
 
@@ -1316,7 +1328,7 @@ def plan(out, cfg: xcl.Config, config_dir: str) -> None:
     )
 ```
 
-Rendering a diff as text (`changes.Pieces()`, with or without colour) is not yet available from Python, so `plan` prints the entities and summary counts the `xcl.Diff` holds; see the <a href={pythonParityURL}>parity list</a>.
+Printing a diff as text (`xcl.PrintDiff`, with or without colour) is not yet available from Python, so `plan` prints the entities and summary counts the `xcl.Diff` holds. Richer printing in Python is coming; see the <a href={pythonParityURL}>parity list</a>.
 
   </div>
 </CodeTabs>
@@ -1423,11 +1435,12 @@ the network and the container, sits under the container. The colours come
 from a renderer made for standard output, so they show only in a terminal.
 
 `inspect` reads the state the same way, finds the entity by its address and
-turns it back into configuration text with `EncodeEntity`. It asks for the
+prints it as configuration text with `xcl.PrintEntity`. It asks for the
 values the provider set, each marked, and for every reference as it was
-written, so the text shows how the entity is wired to the others. In a
-terminal its pieces are rendered with `highlight.ANSI`, so it is syntax
-highlighted:
+written, so the text shows how the entity is wired to the others.
+`formatterFor` makes the same colour decision as the example's logging, with
+Lip Gloss: in a terminal the text is printed with `highlight.Terminal`, so it
+is syntax highlighted, and anywhere else with `highlight.Plain`:
 
 <CodeTabs>
   <div slot="go">
@@ -1442,22 +1455,21 @@ func inspect(out io.Writer, c *xcl.Config, address string) error {
 		return err
 	}
 
-	text, err := xcl.EncodeEntity(entity, xcl.IncludeComputed(), xcl.ShowReferences())
-	if err != nil {
-		return err
-	}
-
 	// xcl never checks for a terminal, asking it for colour is the program's
 	// decision. It is decided for out itself, so output to a file or a pipe
 	// is plain text.
-	var renderer highlight.Renderer = highlight.Text
+	return xcl.PrintEntity(out, entity, xcl.IncludeComputed(), xcl.ShowReferences(), xcl.WithFormatter(formatterFor(out)))
+}
+
+// formatterFor returns the format to write to out in: terminal colour when
+// lipgloss finds out shows colour, the same decision the example's logging
+// makes, and plain text otherwise
+func formatterFor(out io.Writer) highlight.Formatter {
 	if lipgloss.NewRenderer(out).ColorProfile() != termenv.Ascii {
-		renderer = highlight.ANSI
+		return highlight.Terminal
 	}
 
-	_, err = out.Write(renderer.Render(highlight.Pieces(text)))
-
-	return err
+	return highlight.Plain
 }
 ```
 
@@ -1478,7 +1490,7 @@ def inspect(out, cfg: xcl.Config, address: str) -> None:
         print(f"  {name} = {value!r}", file=out)
 ```
 
-Converting a live entity to configuration text (`EncodeEntity`, with `IncludeComputed` and `ShowReferences`) is not yet available from Python, so `inspect` prints the entity's fields instead; see the <a href={pythonParityURL}>parity list</a>. The file is not named `inspect.py`: a module of that name beside `main.py` shadows the standard library's `inspect`, which `dataclasses` imports, and `import xcl` fails.
+Printing a live entity as configuration text (`PrintEntity`, with `IncludeComputed` and `ShowReferences`) is not yet available from Python, so `inspect` prints the entity's fields instead; see the <a href={pythonParityURL}>parity list</a>. The file is not named `inspect.py`: a module of that name beside `main.py` shadows the standard library's `inspect`, which `dataclasses` imports, and `import xcl` fails.
 
   </div>
 </CodeTabs>
@@ -2072,6 +2084,30 @@ container and the templates still refer to it, fails validation: the error
 says that `docker.container.web` refers to `docker.network.app.meta.name`,
 which is not defined anywhere in the configuration, and nothing is created,
 changed or destroyed.
+
+A mistake inside a block is reported with the lines at fault.
+`./testdata/broken` gives the network a `timeout` block, which the Docker
+plugin's network does not take. Planning it, with a Docker engine running:
+
+```bash
+./build/xcl-docker plan ./testdata/broken
+```
+
+prints a report to standard error and exits with status 1, without creating,
+changing or saving anything:
+
+```text
+Error: Unsupported block type
+
+  on testdata/broken/main.xcl line 7, in docker.network.broken, field timeout[0]:
+     5 |   subnet = "10.99.0.0/24"
+     6 | 
+     7 |   timeout "http" {
+     8 |     connect = 30
+     9 |   }
+
+Blocks of type "timeout" are not expected here.
+```
 
 After `destroy`, `status` prints `nothing applied`.
 
