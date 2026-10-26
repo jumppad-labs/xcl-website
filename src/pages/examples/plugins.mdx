@@ -1074,13 +1074,18 @@ per command:
             case _:
                 print(f"unknown command {command!r}\n\n{usage}", file=stderr)
                 return 2
-    except xcl.Error as err:
+    except xcl.PluginLoadError as err:
         # a failed operation raises, the Go version returns the error
         print(explain_plugin_load(err), file=stderr)
         return 1
+    except xcl.Error as err:
+        # a configuration problem is printed as a report with the lines at
+        # fault, anything else as its message, coloured only on a terminal
+        xcl.print_error(err, stderr, formatter=xcl.highlight.for_stream(stderr))
+        return 1
 ```
 
-Python prints every error as its message on one line. Printing a configuration problem as a report is not yet available from Python; richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a>.
+`xcl.print_error` prints an error as `xcl.PrintError` does, to `sys.stderr` unless you pass a stream. An xcl error a program does not catch still shows its report: every xcl error holding a configuration problem carries the report as an exception note, which Python prints after the traceback.
 
   </div>
 </CodeTabs>
@@ -1311,24 +1316,12 @@ func plan(out io.Writer, c *xcl.Config, configDir string) error {
 def plan(out, cfg: xcl.Config, config_dir: str) -> None:
     changes = cfg.diff(config_dir)
 
-    # a block per changed entity, then the summary line
-    for entity in changes.resources:
-        if entity.action == "unchanged":
-            continue
-
-        print(f"{entity.action} {entity.address}", file=out)
-        for change in entity.changes:
-            print(f"  {change.path}: {change.before!r} -> {change.after_value!r}", file=out)
-
-    s = changes.summary
-    print(
-        f"{s.create} to create, {s.update} to update, {s.replace} to replace, "
-        f"{s.delete} to delete, {s.unchanged} unchanged",
-        file=out,
-    )
+    # colour is decided for out itself, so a plan written to a file or a pipe
+    # is plain text
+    xcl.print_diff(changes, out, formatter=xcl.highlight.for_stream(out))
 ```
 
-Printing a diff as text (`xcl.PrintDiff`, with or without colour) is not yet available from Python, so `plan` prints the entities and summary counts the `xcl.Diff` holds. Richer printing in Python is coming; see the <a href={pythonParityURL}>parity list</a>.
+`xcl.highlight.for_stream` picks `xcl.highlight.TERMINAL` when the stream is a terminal and `NO_COLOR` is unset or empty, and `xcl.highlight.PLAIN` otherwise.
 
   </div>
 </CodeTabs>
@@ -1483,14 +1476,19 @@ def inspect(out, cfg: xcl.Config, address: str) -> None:
     except xcl.NotFoundError:
         raise SystemExit(f"no entity {address} in the saved state, xcl-docker status lists them")
 
-    # the entity is an xcl.Entity, a read-only mapping of the settings the
-    # plugin's schema declares, including the values the provider set
-    print(entity.meta.id, file=out)
-    for name, value in entity.items():
-        print(f"  {name} = {value!r}", file=out)
+    # xcl never checks for a terminal, asking it for colour is the program's
+    # decision. It is decided for out itself, so output to a file or a pipe
+    # is plain text.
+    cfg.print_entity(
+        entity,
+        out,
+        include_computed=True,
+        show_references=True,
+        formatter=xcl.highlight.for_stream(out),
+    )
 ```
 
-Printing a live entity as configuration text (`PrintEntity`, with `IncludeComputed` and `ShowReferences`) is not yet available from Python, so `inspect` prints the entity's fields instead; see the <a href={pythonParityURL}>parity list</a>. The file is not named `inspect.py`: a module of that name beside `main.py` shadows the standard library's `inspect`, which `dataclasses` imports, and `import xcl` fails.
+As in `plan`, `xcl.highlight.for_stream` makes the colour decision for `out` itself. The file is not named `inspect.py`: a module of that name beside `main.py` shadows the standard library's `inspect`, which `dataclasses` imports, and `import xcl` fails.
 
   </div>
 </CodeTabs>

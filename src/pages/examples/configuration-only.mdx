@@ -663,6 +663,56 @@ xcl writes nothing unless a receiver is set. The receiver needs nothing from
 the program but event data at `xcl.EventDataProcessed`: each event returns the
 entity it carries, typed by the Config that delivered it.
 
+`main` runs it on the directory given as an argument, `./config` by default.
+When the configuration has a mistake, it prints the
+[report](/problems/#showing-problems-to-a-person) of each problem, the lines
+of source at fault numbered, and anything else as its message. Colour is asked
+for, as xcl never decides it alone:
+
+<CodeTabs>
+  <div slot="go">
+
+```go title="example/configonly/main.go"
+func main() {
+	dir := "./config"
+	if len(os.Args) > 1 {
+		dir = os.Args[1]
+	}
+
+	if err := run(dir); err != nil {
+		// a configuration problem is printed as a report with the lines at
+		// fault, anything else as its message. Colour is asked for here, as
+		// xcl never decides it alone: terminal colour for a terminal, plain
+		// text when stderr is redirected or NO_COLOR is set.
+		xcl.PrintError(os.Stderr, err, xcl.WithFormatter(highlight.For(os.Stderr)))
+		os.Exit(1)
+	}
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python
+if __name__ == "__main__":
+    try:
+        run(sys.argv[1] if len(sys.argv) > 1 else "./config")
+    except Exception as err:
+        # a configuration problem is printed as a report with the lines at
+        # fault, anything else as its message. Colour is asked for here, as
+        # xcl never decides it alone: terminal colour for a terminal, plain
+        # text when stderr is redirected or NO_COLOR is set.
+        xcl.print_error(err, formatter=xcl.highlight.for_stream(sys.stderr))
+        sys.exit(1)
+```
+
+  </div>
+</CodeTabs>
+
+The Python program shows the report even without the `try`: an
+`xcl.ConfigError` nobody catches carries its plain report as an exception
+note, so it is printed after the traceback.
+
 `ingressRoutes` is the program's business logic, plain Go over the decoded
 types with no xcl calls. Because the configuration links the blocks by id, each
 hop is a lookup:
