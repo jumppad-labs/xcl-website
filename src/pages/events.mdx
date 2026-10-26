@@ -356,7 +356,10 @@ get their entity and step, is covered in
 - **Ordered, one at a time.** The receiver is called with one event at a
   time, in the order the events were emitted, never concurrently, on the
   goroutine that called `Validate`, `Apply` or `Destroy`. It needs no locking
-  of its own.
+  of its own. Both Python clients deliver events the same way: `xcl.Config`
+  calls `on_event` on the thread running the operation, and `xcl.aio.Config`
+  calls it once per event, in order, each call finished before the next
+  starts.
 - **Never dropped.** Emitting never waits for the receiver. Undelivered
   events are held in a bounded buffer, set with `xcl.WithEventBufferSize`
   (default `xcl.DefaultEventBufferSize`, 1024). When the buffer is full,
@@ -416,9 +419,10 @@ which shows how little an application needs. It is `events.SlogHandler`
 wrapped around a slog handler from
 [charmbracelet/log](https://github.com/charmbracelet/log), chosen for its
 readable, coloured terminal output. It is an example, not part of xcl, so it
-never becomes a dependency of an application that uses xcl. The Python tab
-shows the same receiver written with the standard library alone, colouring
-its lines with ANSI escapes.
+never becomes a dependency of an application that uses xcl. Python ships the
+same receiver as `xcl.prettylog`, part of the package and written with the
+standard library alone, coloured by the package's own printing support, and
+it writes the same lines.
 
 <CodeTabs>
   <div slot="go">
@@ -442,40 +446,31 @@ func Handler(w io.Writer, level slog.Level) xcl.EventHandler {
   <div slot="python">
 
 ```python
-import os
-from typing import Callable, TextIO
+import sys
 
 import xcl
 
-RANK = {"debug": 0, "info": 1, "warn": 2, "error": 3}
-COLOUR = {"debug": "\033[90m", "info": "\033[36m", "warn": "\033[33m", "error": "\033[31m"}
-RESET = "\033[0m"
+cfg = xcl.Config(
+    on_event=xcl.prettylog.handler(sys.stderr, xcl.prettylog.level_from_env()),
+    event_data=xcl.EventDataLevel.PROCESSED,
+)
+```
 
-
-def level_from_env() -> str:
-    return os.environ.get("XCL_LOG_LEVEL", "info")
-
-
-def handler(out: TextIO, level: str) -> Callable[[xcl.Event], None]:
-    def handle(event: xcl.Event) -> None:
-        if event.phase == "log":
-            event_level, text = event.level, event.message
-        elif event.phase == "error":
-            event_level, text = "error", f"{event.operation} {event.phase}"
-        else:
-            event_level, text = "info", f"{event.operation} {event.phase}"
-        if RANK.get(event_level, 1) < RANK.get(level, 1):
-            return
-        colour, reset = (COLOUR[event_level], RESET) if out.isatty() else ("", "")
-        stamp = event.time.strftime("%I:%M%p").lstrip("0")
-        out.write(f"{stamp} {colour}{event_level.upper()[:4]}{reset} {text} source={event.source}")
-        # ...
-
-    return handle
+```text
+3:04PM INFO create success source=core operation=create phase=success resource=resource.recording.one type=recording.one file=/work/main.xcl duration=509µs
+  resource "recording" "one" {
+    log    = "/work/log.jsonl"
+    value  = "a"
+    output = "one-a" # set by the provider
+  }
 ```
 
   </div>
 </CodeTabs>
+
+`xcl.aio.Config` takes the same handler, and
+`xcl.prettylog.handler(logger=logging.getLogger("app"))` sends the same lines
+through a standard logger instead of a stream.
 
 It also writes the configuration of each entity it sees created beneath the
 line reporting it. The event itself returns that entity, as the Go type
@@ -497,6 +492,13 @@ if lipgloss.NewRenderer(w).ColorProfile() != termenv.Ascii {
 xcl.PrintEntity(&text, entity, xcl.IncludeComputed(), xcl.WithFormatter(formatter))
 ```
 
+The Python receiver renders each created resource from the event's saved
+record, which the engine allows while the operation runs, and colours it
+through `xcl.highlight` when the stream is a terminal and `NO_COLOR` is unset.
+It also writes a configuration mistake's report, with the source lines in
+question, beneath the line reporting the error, and says once how to turn
+resource data on when it is off.
+
 See [Printing and highlighting](/configuration-text/#printing-and-highlighting).
 
 Every example sets it up in one line, writing to standard error at the level
@@ -514,7 +516,7 @@ when it is unset:
   <div slot="python">
 
 ```python
-    return prettylog.handler(out, prettylog.level_from_env())
+cfg = xcl.Config(on_event=xcl.prettylog.handler(sys.stderr, xcl.prettylog.level_from_env()))
 ```
 
   </div>
