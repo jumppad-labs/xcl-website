@@ -44,25 +44,15 @@ if err != nil {
   </div>
   <div slot="python">
 
-Python has no slog, so the handler writes through the standard library's
-`logging` module instead:
+Python has no slog, so `xcl.logging_handler` writes through the standard
+library's `logging` module instead:
 
 ```python title="main.py"
 import logging
 
 import xcl
 
-log = logging.getLogger("xcl")
-
-
-def handler(event: xcl.Event) -> None:
-    if event.error is not None:
-        log.error("%s %s %s: %s", event.operation, event.phase, event.resource_id, event.error)
-    else:
-        log.info("%s %s %s", event.operation, event.phase, event.resource_id)
-
-
-cfg = xcl.Config(on_event=handler)
+cfg = xcl.Config(on_event=xcl.logging_handler(logging.getLogger("xcl")))
 ```
 
   </div>
@@ -83,6 +73,15 @@ Each event's fields become the attributes `source`, `operation`, `phase`,
 `resource`, `type`, `file`, `duration` and `error`, when they are set,
 followed by its details in key order.
 
+`xcl.logging_handler` writes the same levels, messages and attributes as
+`events.SlogHandler`, on standard `logging` records: debug, info, warning and
+error, the same `<operation> <phase>` messages, and the same attribute names,
+so a JSON or key-value formatter, structlog through its `ProcessorFormatter`
+and loguru through its standard logging integration see them as fields. Each
+record also carries the event's time, and `record.xcl_event` is the
+`xcl.Event` itself. The logger's level is checked first, so a filtered event
+costs one call. With no logger, it writes to `logging.getLogger("xcl")`.
+
 ### Errors in logs
 
 `events.SlogHandler` writes an event's error as its one-line message, so a
@@ -90,12 +89,23 @@ configuration problem is logged as one line, with its file, range, summary,
 detail, block and field. Other loggers can carry the full
 [report](/problems/#showing-problems-to-a-person) a person reads: zap's
 `zap.Error(err)` writes it in its `errorVerbose` field, with no adapter.
+`xcl.logging_handler` writes an event's error as the same one line, and in
+Python the error an operation raises carries the report as an exception
+note, so `logger.exception(...)` writes it under the traceback, and
+`xcl.highlight.LogFormatter` writes it in colour; see
+[In logs](/problems/#in-logs).
 
 To show the report under the log line, a receiver can print the event's
-`Error` with `xcl.PrintError`. Each configuration problem has an error event
-of its own carrying the `*xclerrors.Diagnostic`, and the event that ends the
-call carries the `*xclerrors.ConfigError` holding them all, so this receiver
-prints each problem once, under its own line:
+`Error` with `xcl.PrintError`, or `event.error` with `xcl.print_error` in
+Python. Each configuration problem has an error event of its own carrying the
+`*xclerrors.Diagnostic`, and the event that ends the call carries the
+`*xclerrors.ConfigError` holding them all, so this receiver prints each
+problem once, under its own line. In Python each problem's event carries an
+`xcl.ConfigError` holding that problem alone, and the one that ends the call
+carries the `xcl.ConfigError` whose `causes` are all of them:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 import (
@@ -121,7 +131,32 @@ c, err := xcl.NewConfig(
 )
 ```
 
-Printing the report is Go only for now; richer printing in Python is coming.
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+import logging
+import sys
+
+import xcl
+
+log_event = xcl.logging_handler(logging.getLogger("app"))
+
+
+def on_event(event: xcl.Event) -> None:
+    log_event(event)
+
+    # one problem's error collects no others; the error that ends the call
+    # collects them all as its causes
+    if event.error is not None and event.error.tokens and not event.error.causes:
+        xcl.print_error(event.error, formatter=xcl.highlight.for_stream(sys.stderr))
+
+
+cfg = xcl.Config(on_event=on_event)
+```
+
+  </div>
+</CodeTabs>
 
 ## The event
 

@@ -8,7 +8,6 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
-import { pythonParityURL } from "../config/site";
 
 <Hero
   heading="Diffs"
@@ -52,19 +51,18 @@ return xcl.PrintDiff(os.Stdout, d)
   <div slot="python">
 
 ```python title="main.py"
+import xcl
+
 d = cfg.diff("./config")
 
 if d.changed() == 0:
     print("nothing to do")
     return
 
-s = d.summary
-print(f"{s.create} to create, {s.update} to update, {s.replace} to replace, {s.delete} to delete")
-for resource in d.resources:
-    print(resource.address, resource.action)
+xcl.print_diff(d)
 ```
 
-Printing a change summary, `xcl.PrintDiff`, is not yet available from Python, so a Python program prints the summary counts and the entities itself. Richer printing in Python is coming; see the <a href={pythonParityURL}>parity list</a>.
+`xcl.print_diff` prints to `sys.stdout` unless you pass a stream.
 
   </div>
 </CodeTabs>
@@ -209,7 +207,11 @@ if err := xcl.PrintDiff(os.Stdout, d); err != nil {
   </div>
   <div slot="python">
 
-Printing a change summary is not yet available from Python; richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python
+xcl.print_diff(d)
+```
+
+`xcl.print_diff` prints to `sys.stdout` unless you pass a stream, such as `xcl.print_diff(d, sys.stderr)`. It takes a diff that `cfg.diff` returned; a `Diff` built by hand has no printed form and raises `ValueError`.
 
   </div>
 </CodeTabs>
@@ -310,7 +312,15 @@ xcl.PrintDiff(os.Stdout, d, xcl.WithFormatter(highlight.For(os.Stdout)))
   </div>
   <div slot="python">
 
-Printing a diff, with or without colour, is not yet available from Python; richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python
+import sys
+
+import xcl
+
+xcl.print_diff(d, formatter=xcl.highlight.for_stream(sys.stdout))
+```
+
+`formatter=xcl.highlight.TERMINAL` always colours; `xcl.highlight.for_stream(stream)` colours only a terminal with `NO_COLOR` unset or empty.
 
   </div>
 </CodeTabs>
@@ -346,7 +356,18 @@ xcl.PrintDiff(os.Stdout, d,
   </div>
   <div slot="python">
 
-Themes are not yet available from Python; richer printing in Python is coming.
+```python
+from xcl.highlight import DEFAULT_THEME, Kind
+
+theme = DEFAULT_THEME | {
+    Kind.INSERTED: "bold green",
+    Kind.DELETED: "bold red",
+}
+
+xcl.print_diff(d, formatter=xcl.highlight.TERMINAL, theme=theme)
+```
+
+`DEFAULT_THEME` cannot be changed in place; `|` gives a new theme. The kinds are `Kind.INSERTED`, `Kind.DELETED` and `Kind.CHANGED`, in the category `Kind.DIFF`.
 
   </div>
 </CodeTabs>
@@ -382,7 +403,20 @@ page.Execute(w, map[string]any{"Diff": template.HTML(summary.String())})
   </div>
   <div slot="python">
 
-HTML output is not yet available from Python; richer printing in Python is coming.
+```python
+import io
+from pathlib import Path
+
+from xcl.highlight import DEFAULT_THEME
+
+Path("static/xcl.css").write_text(xcl.highlight.css(DEFAULT_THEME))
+
+summary = io.StringIO()
+xcl.print_diff(d, summary, formatter=xcl.highlight.HTML)
+html = summary.getvalue()
+```
+
+`xcl.highlight.css(theme)` returns the stylesheet `highlight.WriteCSS` writes. The HTML is already escaped, so insert it into a template without escaping it again, such as with `markupsafe.Markup(html)` in Jinja.
 
   </div>
 </CodeTabs>
@@ -414,7 +448,17 @@ for _, token := range d.Tokens() {
   </div>
   <div slot="python">
 
-Diff tokens are not yet available from Python; richer printing in Python is coming.
+```python
+from xcl.highlight import Kind, css_class_of, parent_of
+
+for token in d.tokens:
+    if parent_of(token.kind) == Kind.DIFF:
+        print(f"[{css_class_of(token.kind)}]{token.text}[/]", end="")
+    else:
+        print(token.text, end="")
+```
+
+`token.kind` is a `xcl.highlight.Kind`, or its number for a kind from a newer engine that the package does not know; `parent_of` and `css_class_of` work for both. A format of your own is any object with a `format(out, theme, tokens)` method, passed as `formatter=`; `xcl.highlight.style_for(theme, kind)` resolves a kind's style through its category.
 
   </div>
 </CodeTabs>

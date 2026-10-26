@@ -23,9 +23,9 @@ and the Config's `EncodeSavedEntity` does the same from its saved data. In
 Python the two are `cfg.encode_entity` and `cfg.encode_saved_entity`, and the
 engine renders the text, so Python and Go write identical text for the same
 entity. Both write exactly one block, so convert several entities by calling
-once for each. In Go the text is plain, and `xcl.PrintEntity` prints an
-entity coloured for a terminal, as HTML or as SVG in one call; in Python
-`highlight=True` colours it for a terminal.
+once for each. The text is plain, and `xcl.PrintEntity` in Go and
+`cfg.print_entity` in Python print an entity coloured for a terminal, as HTML
+or as SVG in one call.
 
 ## Converting an entity
 
@@ -402,10 +402,17 @@ err = xcl.PrintEntity(os.Stdout, db,
 ```python title="main.py"
 import sys
 
-print(cfg.encode_entity(db, include_computed=True, highlight=sys.stdout.isatty()))
+import xcl
+
+db = cfg.find(PostgreSQL, "database.postgres.main")
+
+cfg.print_entity(db,
+    include_computed=True,
+    formatter=xcl.highlight.for_stream(sys.stdout),
+)
 ```
 
-`highlight=True` colours the text for a terminal with xcl's default colours, and `cfg.encode_saved_entity(event.data, highlight=True)` colours a saved record the same way. It combines with every other choice. Richer printing in Python, with the formats and themes below, is coming.
+`cfg.print_entity` writes to `sys.stdout` unless you pass a stream as its second argument, and takes the encoding keywords on this page beside the printing keywords `formatter=` and `theme=`. `cfg.print_saved_entity(event.data, include_computed=True)` prints a saved record the same way, from an `on_event` handler while an operation runs too, as `cfg.encode_saved_entity` does. Both raise what the encode calls raise, writing nothing. With `xcl.aio.Config` the calls are awaited, such as `await cfg.print_entity(db)`.
 
   </div>
 </CodeTabs>
@@ -448,7 +455,14 @@ err = xcl.PrintEntity(file, db, xcl.WithFormatter(highlight.SVG))
   </div>
   <div slot="python">
 
-Python offers the terminal colours of `highlight=True` and the plain text. Richer printing in Python, with HTML and SVG, is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python
+import xcl
+
+with open("database.svg", "w", encoding="utf-8") as file:
+    cfg.print_entity(db, file, formatter=xcl.highlight.SVG)
+```
+
+The five formats are `xcl.highlight.PLAIN`, the default, `TERMINAL`, `HTML`, `HTML_INLINE` and `SVG`, and each writes the same bytes as Go's.
 
   </div>
 </CodeTabs>
@@ -484,10 +498,16 @@ err = xcl.PrintEntity(os.Stdout, db, xcl.WithFormatter(formatter))
   <div slot="python">
 
 ```python
-import sys
+import xcl
 
-text = cfg.encode_entity(db, highlight=sys.stdout.isatty())
+formatter = xcl.highlight.PLAIN
+if colour:
+    formatter = xcl.highlight.TERMINAL
+
+cfg.print_entity(db, formatter=formatter)
 ```
+
+`xcl.highlight.for_stream(stream)` makes the same choice as `highlight.For`: `TERMINAL` when `stream.isatty()` is true and `NO_COLOR` is unset or empty, and `PLAIN` for anything else, such as a file, a pipe or a `StringIO`.
 
   </div>
 </CodeTabs>
@@ -532,7 +552,20 @@ err = xcl.PrintEntity(os.Stdout, db,
   </div>
   <div slot="python">
 
-Themes are not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only, with xcl's default colours. Richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python
+import xcl
+from xcl.highlight import DEFAULT_THEME, Kind
+
+theme = DEFAULT_THEME | {
+    Kind.ATTRIBUTE: "#ff8800",
+    Kind.COMMENT: "italic #6a9955",
+    Kind.STRING: "bright-green bg:#202020",
+}
+
+cfg.print_entity(db, formatter=xcl.highlight.TERMINAL, theme=theme)
+```
+
+A theme is a mapping of `xcl.highlight.Kind` to style string. `DEFAULT_THEME` cannot be changed in place, and `|` gives a new theme with the default's styles and the given ones in their place.
 
   </div>
 </CodeTabs>
@@ -567,7 +600,21 @@ if err := theme.Validate(); err != nil {
   </div>
   <div slot="python">
 
-Themes are not yet available from Python. Richer printing in Python is coming.
+```python
+import logging
+
+import xcl
+from xcl.highlight import DEFAULT_THEME, Kind, validate
+
+theme = DEFAULT_THEME | {Kind.ATTRIBUTE: "bold orang"}
+
+try:
+    validate(theme)
+except xcl.InvalidStyleError as err:
+    logging.warning("%s", err)
+```
+
+`validate` raises one `xcl.InvalidStyleError` naming every unknown word, one line for each, and its `words` holds a `(kind, style, word)` for each.
 
   </div>
 </CodeTabs>
@@ -614,7 +661,23 @@ err = xcl.PrintEntity(os.Stdout, db,
   </div>
   <div slot="python">
 
-Editor themes are not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only, with xcl's default colours. Richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python
+import sys
+
+import xcl
+from xcl.highlight import DEFAULT_THEME, TERMINAL, load_vscode_theme
+
+try:
+    loaded = load_vscode_theme("dark-plus.json")
+except xcl.InvalidThemeError as err:
+    sys.exit(f"theme: {err.details['reason']}")
+
+theme = DEFAULT_THEME | loaded
+
+cfg.print_entity(db, formatter=TERMINAL, theme=theme)
+```
+
+`load_vscode_theme` takes the theme file's path, or its contents as bytes. The engine converts it with the same rules as Go, so the theme is the same in both languages.
 
   </div>
 </CodeTabs>
@@ -705,7 +768,15 @@ err = highlight.WriteCSS(file, highlight.DefaultTheme)
   </div>
   <div slot="python">
 
-HTML output and stylesheets are not yet available from Python. Richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python
+from pathlib import Path
+
+from xcl.highlight import DEFAULT_THEME, css
+
+Path("xcl.css").write_text(css(DEFAULT_THEME))
+```
+
+`xcl.highlight.css(theme)` returns the stylesheet as a string, identical to the one Go writes for the same theme.
 
   </div>
 </CodeTabs>
@@ -740,7 +811,20 @@ page.Execute(w, map[string]any{"Entity": template.HTML(entity.String())})
   </div>
   <div slot="python">
 
-HTML output is not yet available from Python. Richer printing in Python is coming.
+```python
+import io
+
+from markupsafe import Markup
+
+import xcl
+
+entity = io.StringIO()
+cfg.print_entity(db, entity, formatter=xcl.highlight.HTML)
+
+page.render(entity=Markup(entity.getvalue()))
+```
+
+In a Jinja template the HTML is marked safe with `markupsafe.Markup`, or the `|safe` filter, so the template writes it as it is.
 
   </div>
 </CodeTabs>
@@ -800,7 +884,32 @@ err = xcl.PrintEntity(os.Stdout, db, xcl.WithFormatter(bbcode))
   </div>
   <div slot="python">
 
-Writing a format is not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only. Richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+```python
+from xcl.highlight import hex_colour, style_for
+
+
+class BBCode:
+    def format(self, out, theme, tokens):
+        for token in tokens:
+            style = style_for(theme, token.kind)
+
+            text = token.text
+            if style.bold:
+                text = "[b]" + text + "[/b]"
+            if style.italic:
+                text = "[i]" + text + "[/i]"
+            if style.foreground:
+                text = "[color=" + hex_colour(style.foreground) + "]" + text + "[/color]"
+
+            out.write(text)
+
+
+bbcode = BBCode()
+
+cfg.print_entity(db, formatter=bbcode)
+```
+
+A format is any object with a `format(out, theme, tokens)` method, the `xcl.highlight.Formatter` protocol, and it writes to the stream `out`. Each `xcl.highlight.Token` has a `kind` and its `text`. `xcl.highlight.style_for(theme, kind)` resolves a style through its category and `TEXT`, and `xcl.highlight.hex_colour` gives a named colour as its fixed hex colour. For a known kind, `token.kind.parent` and `token.kind.css_class` give its category and HTML class. A kind from a newer engine that the package does not know arrives as its number, and `style_for` and `xcl.highlight.parent_of(number)` still take it to its category.
 
   </div>
 </CodeTabs>
@@ -853,7 +962,17 @@ err = highlight.Terminal.Format(os.Stdout, highlight.DefaultTheme, highlight.Tok
   </div>
   <div slot="python">
 
-Labelled tokens are not yet available from Python. Richer printing in Python is coming.
+```python
+import sys
+
+import xcl
+
+tokens = cfg.entity_tokens(db, include_computed=True)
+
+bbcode.format(sys.stdout, xcl.highlight.DEFAULT_THEME, tokens)
+```
+
+`cfg.saved_entity_tokens(event.data)` labels a saved record's text the same way, from an `on_event` handler too, and with `xcl.aio.Config` both are awaited. Python has no `highlight.Tokenize`: labelled text comes from the engine, through `cfg.entity_tokens`, `cfg.saved_entity_tokens`, an error's `err.tokens` and a diff's `diff.tokens`. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
 
   </div>
 </CodeTabs>

@@ -8,7 +8,6 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
-import { pythonParityURL } from "../config/site";
 
 <Hero
   heading="Problems in configuration"
@@ -101,12 +100,17 @@ config/main.xcl:3,3-8: Unsupported argument; An argument named "modls" is not ex
 
 In Python each problem has `file`, `line`, `column` and `message`, plus
 `detail`, the why on its own, and `entity` and `field` when the engine knows
-them.
+them. `str(err)` is the engine's message, Go's `Error()`: the same single
+line, one for each problem.
 
 ## Showing problems to a person
 
 `xcl.PrintError` prints an error for the person who wrote the configuration,
-in one call. Give it whatever the operation returned:
+in one call, and so does `xcl.print_error` in Python. Give it whatever the
+operation returned or raised:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 import (
@@ -120,6 +124,29 @@ if err := c.Validate("./config"); err != nil {
 	os.Exit(1)
 }
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+import sys
+
+import xcl
+
+try:
+    cfg.validate("./config")
+except xcl.Error as err:
+    xcl.print_error(err)
+    sys.exit(1)
+```
+
+  </div>
+</CodeTabs>
+
+`xcl.print_error` writes to `sys.stderr` unless it is given a stream, and
+`xcl.format_error(err)` returns the same text as a string, as
+`traceback.print_exception` and `traceback.format_exception` do for a
+traceback.
 
 Each problem is printed as a report: the severity and summary, where the
 problem is, the numbered lines of source around it, and the detail.
@@ -144,11 +171,25 @@ never opens the file again. A configuration with several problems prints one
 report for each, in the order they were found, with a blank line after each.
 
 Source lines are never wrapped. The detail is wrapped at 80 columns, and
-`xcl.WithWidth` sets another width; 0 never wraps it:
+`xcl.WithWidth` sets another width, `width=` in Python; 0 never wraps it, and
+neither does `None` in Python:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 xcl.PrintError(os.Stderr, err, xcl.WithWidth(40))
 ```
+
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+xcl.print_error(err, width=40)
+```
+
+  </div>
+</CodeTabs>
 
 ```text
 An argument named "modls" is not
@@ -185,12 +226,22 @@ cache unavailable
 An error with no configuration problem in it is printed as its message and a
 line break, and a nil error prints nothing.
 
+In Python an operation raises the configuration error itself, so there is
+nothing to search for. `xcl.print_error` prints the report of the xcl error it
+is given; any other exception, and an xcl error holding no configuration
+problem, is printed as its message and a line break. An exception raised
+`from` an xcl error is printed as its own message, so print the xcl error you
+caught.
+
 ### In colour
 
 The report is plain text unless you ask for something else; xcl never decides
 on its own to colour output. `highlight.For` picks the format for where the
-report is going: colour for a terminal, plain text when the output is
-redirected or `NO_COLOR` is set.
+report is going, and `xcl.highlight.for_stream` in Python: colour for a
+terminal, plain text when the output is redirected or `NO_COLOR` is set.
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 import (
@@ -203,11 +254,29 @@ import (
 xcl.PrintError(os.Stderr, err, xcl.WithFormatter(highlight.For(os.Stderr)))
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+import sys
+
+import xcl
+
+xcl.print_error(err, formatter=xcl.highlight.for_stream(sys.stderr))
+```
+
+  </div>
+</CodeTabs>
+
 In colour, the severity and the source at fault are styled as an error or a
 warning, and the rest of the source is coloured as configuration, the way the
 editor colours it. The formats and themes are the ones configuration text
 uses, so `highlight.HTML` puts the same report on a web page and
-`xcl.WithTheme` changes its colours; see
+`xcl.WithTheme` changes its colours. In Python they are the `formatter=` and
+`theme=` keywords: `xcl.format_error(err, formatter=xcl.highlight.HTML)`
+returns the report as markup, already escaped, and
+`theme=xcl.highlight.DEFAULT_THEME | {xcl.highlight.Kind.ERROR: "bold #ff5555"}`
+changes the colour of an error. See
 [Printing and highlighting](/configuration-text/#printing-and-highlighting).
 
 ### Formatting with %+v
@@ -228,12 +297,45 @@ This works only on the configuration error itself: once it is wrapped with
 `fmt.Errorf`, `%+v` writes the wrapper's one-line message. `PrintError` is the
 dependable route.
 
+### In a traceback
+
+Python needs no code to show the report on an error nobody catches. Every xcl
+error holding a configuration problem carries its plain report, with the
+detail wrapped at 80 columns, as an exception note, so an uncaught error's
+traceback shows it after the message:
+
+```text
+Traceback (most recent call last):
+  File "main.py", line 18, in <module>
+    cfg.validate("./config")
+  ...
+xcl._errors.ConfigError: config/main.xcl:3,3-8: Unsupported argument; An argument named "modls" is not expected here. (agent.claude, modls)
+Error: Unsupported argument
+
+  on config/main.xcl line 3, in agent.claude, field modls:
+     1 | agent "claude" {
+     2 |   description = "writes the code"
+     3 |   modls       = ["opus"]
+     4 |   timeout     = 300
+     5 |   retries     = 2
+
+An argument named "modls" is not expected here.
+```
+
+`str(err)` stays the one line for each problem. `err.tokens` is the report as
+labelled text, Go's `xcl.ErrorTokens(err)`, for a format of your own, and is
+empty for an error without a report.
+
 ### In logs
 
 A structured logger that records an error's detailed formatting carries the
 report with no adapter. With [zap](https://github.com/uber-go/zap),
 `zap.Error(err)` writes the one line under `error` and the report under
-`errorVerbose`:
+`errorVerbose`. In Python, `logging.exception(...)` and `exc_info=True` write
+the traceback, and the exception note puts the report after it:
+
+<CodeTabs>
+  <div slot="go">
 
 ```go title="main.go"
 logger.Error("validating configuration", zap.Error(err))
@@ -248,10 +350,44 @@ logger.Error("validating configuration", zap.Error(err))
 }
 ```
 
+  </div>
+  <div slot="python">
+
+```python title="main.py"
+try:
+    cfg.validate("./config")
+except xcl.ConfigError:
+    logger.exception("validating configuration")
+```
+
+```text
+ERROR validating configuration
+Traceback (most recent call last):
+  File "main.py", line 18, in <module>
+    cfg.validate("./config")
+  ...
+xcl._errors.ConfigError: config/main.xcl:3,3-8: Unsupported argument; An argument named "modls" is not expected here. (agent.claude, modls)
+Error: Unsupported argument
+
+  on config/main.xcl line 3, in agent.claude, field modls:
+     1 | agent "claude" {
+     2 |   description = "writes the code"
+     3 |   modls       = ["opus"]
+     4 |   timeout     = 300
+     5 |   retries     = 2
+
+An argument named "modls" is not expected here.
+```
+
+  </div>
+</CodeTabs>
+
 The entry is shown indented, and without the `ts`, `caller` and `stacktrace`
 fields zap's production logger adds. zap asks the error it is given for
 `%+v`, so log the error as `Validate`, `Apply` or `Destroy` returned it; one
 wrapped with `fmt.Errorf` is logged as its one line.
+The Python record is shown written with the format
+`%(levelname)s %(message)s`, its traceback cut short.
 
 `log/slog` logs the one-line message. [`events.SlogHandler`](/events/) writes
 an event's error as that line, whatever slog handler is behind it, and so does
@@ -260,9 +396,34 @@ an error value with `%+v`, so it writes the report, but as one quoted value
 with its line breaks escaped, which is not for reading. To show a person the
 report, print it with `xcl.PrintError` beside the log line.
 
-The report is not yet available from Python, where each problem prints as its
-file, line, column and message. See the <a href={pythonParityURL}>parity list</a>
-for what the package offers.
+In Python, a logged exception shows the report wherever its traceback goes:
+rich's tracebacks and loguru's `logger.exception` show the note too. An error
+logged as a value, as in `logger.error("validating configuration: %s", err)`,
+is written as its one line, and so is an event's error written by
+[`xcl.logging_handler`](/events/), as `events.SlogHandler` writes it.
+
+The note is plain text. To show a logged xcl error's report in colour on a
+console, give the handler `xcl.highlight.LogFormatter`. It takes
+`logging.Formatter`'s own options and `formatter=`, `theme=` and `width=`,
+and writes the traceback followed by the report in the format you choose, in
+place of the plain note; any other exception is written as
+`logging.Formatter` writes it:
+
+```python title="main.py"
+import logging
+import sys
+
+import xcl
+
+handler = logging.StreamHandler()
+handler.setFormatter(
+    xcl.highlight.LogFormatter(
+        "%(levelname)s %(message)s",
+        formatter=xcl.highlight.for_stream(sys.stderr),
+    )
+)
+logging.getLogger("app").addHandler(handler)
+```
 
 </Prose>
 
