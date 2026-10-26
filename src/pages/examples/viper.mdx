@@ -196,15 +196,14 @@ agent "claude" {
 }
 ```
 
+`xcl.PrintError` prints it as a report, straight from the error `Read`
+returns. Viper wraps the diagnostic in its own `viper.ConfigParseError`, and
+`PrintError` finds it inside:
+
 ```go title="main.go"
 if err := xclviper.Read(v, "./config"); err != nil {
-	var problem *xclerrors.Diagnostic
-	if errors.As(err, &problem) {
-		report := xcl.DiagnosticPieces(xclerrors.Diagnostics{problem}, 80)
-		os.Stderr.Write(highlight.Text.Render(report))
-	}
-
-	return err
+	xcl.PrintError(os.Stderr, err)
+	os.Exit(1)
 }
 ```
 
@@ -212,9 +211,26 @@ if err := xclviper.Read(v, "./config"); err != nil {
 Error: Unsupported argument
 
   on config/agents.xcl line 3, in agent.claude, field modle:
+     1 | agent "claude" {
+     2 |   model = "claude/opus"
      3 |   modle = "claude/haiku"
+     4 | }
 
 An argument named "modle" is not expected here.
+```
+
+The source is the line at fault with two lines either side of it, fewer at
+the start or end of the file, and the detail is wrapped at 80 columns. Viper's
+own message, `While parsing config: …`, is the one line `err.Error()` gives,
+for a log. To work with the problem itself, its file, block and field,
+`errors.As` finds the `*xclerrors.Diagnostic`, which `PrintError` takes as
+well:
+
+```go title="main.go"
+var problem *xclerrors.Diagnostic
+if errors.As(err, &problem) {
+	fmt.Println(problem.Entity, problem.Field)
+}
 ```
 
 A runner given a label, `runner "nas" {}`, is reported at the label, since
@@ -224,13 +240,19 @@ the type is a singleton:
 Error: Unexpected label
 
   on config/runner.xcl line 5, in runner:
+     3 | }
+     4 | 
      5 | runner "nas" {
+     6 |   server = "https://maalstrom.app"
+     7 |   listen = variable.listen
 
-runner takes no labels, there is one of it: write it as runner { … }, without "nas".
+runner takes no labels, there is one of it: write it as runner { … }, without
+"nas".
 ```
 
-`highlight.ANSI` in place of `highlight.Text` colours the report for a
-terminal.
+`xcl.WithFormatter(highlight.For(os.Stderr))` colours the report for a
+terminal, and plain text when the output is redirected; see
+[Problems in configuration](/problems/#showing-problems-to-a-person).
 
 ## What to notice
 

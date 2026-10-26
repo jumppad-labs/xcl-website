@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/Shell.astro
 title: "Diffs - xcl"
-description: "See what an apply would do before you run it: which entities would be created, updated, replaced or deleted, which values change, and a readable, optionally coloured rendering of it all."
+description: "See what an apply would do before you run it: which entities would be created, updated, replaced or deleted, which values change, and a readable, optionally coloured printout of it all."
 ---
 import Hero from "../components/sections/Hero.astro";
 import Prose from "../components/sections/Prose.astro";
@@ -33,7 +33,7 @@ cases, such as a configuration that does not parse or validate:
   <div slot="go">
 
 ```go title="main.go"
-import "github.com/jumppad-labs/xcl/highlight"
+import "github.com/jumppad-labs/xcl"
 
 d, err := c.Diff([]string{"./config"})
 if err != nil {
@@ -45,7 +45,7 @@ if d.Changed() == 0 {
 	return nil
 }
 
-os.Stdout.Write(highlight.Text.Render(d.Pieces()))
+return xcl.PrintDiff(os.Stdout, d)
 ```
 
   </div>
@@ -64,7 +64,7 @@ for resource in d.resources:
     print(resource.address, resource.action)
 ```
 
-The rendered text form, `d.Pieces()`, is not yet available from Python, so a Python program prints the summary counts and the entities itself; see the <a href={pythonParityURL}>parity list</a>.
+Printing a change summary, `xcl.PrintDiff`, is not yet available from Python, so a Python program prints the summary counts and the entities itself. Richer printing in Python is coming; see the <a href={pythonParityURL}>parity list</a>.
 
   </div>
 </CodeTabs>
@@ -144,7 +144,7 @@ An update can have no changes of its own. Most often that is because an
 entity it depends on is updated or replaced, and its provider answered
 update for it, such as a container reattached to a replaced network. Its
 `Dependencies` then lists those entities, sorted by address, each with its
-`Address` and `Action`, and the rendering names them. Only an update with
+`Address` and `Action`, and the printed summary names them. Only an update with
 neither changes nor dependencies is one where the provider reports that the
 real entity differs from what was saved, but no configured value changed:
 something changed it outside xcl, and an apply would update it.
@@ -166,7 +166,7 @@ would be for an entity being created.
 
 A change to a sensitive value is reported with `Sensitive` set and with
 neither its old nor its new value, so the secret never reaches the result, its
-JSON, or the rendering. The change is still listed, because knowing that a
+JSON, or the printed summary. The change is still listed, because knowing that a
 secret changed is useful in itself.
 
 Pass `diff.RevealSensitive()` to include both values:
@@ -192,11 +192,29 @@ The result then holds the secrets in plain form, and so does anything made
 from it, so print or store it with the same care as the secrets themselves.
 See [Sensitive values](/sensitive-values/) for marking a field sensitive.
 
-## Reading the rendered output
+## Reading the printed output
 
-`d.Pieces()` lays a result out as text in the style of a git diff, and
-`highlight.Text.Render(d.Pieces())` gives that text plain, ready to print or
-log. This result has an entity for each action, and a replacement
+`xcl.PrintDiff` prints a result as text in the style of a git diff. By
+default the text is plain, ready to print or log:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+if err := xcl.PrintDiff(os.Stdout, d); err != nil {
+	return err
+}
+```
+
+  </div>
+  <div slot="python">
+
+Printing a change summary is not yet available from Python; richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
+
+This result has an entity for each action, and a replacement
 for each reason:
 
 ```text
@@ -270,44 +288,140 @@ Diff: no changes, 9 unchanged.
 
 ## Colour
 
-The pieces are labelled, so colour is only a matter of the renderer. Render
-them with the same renderer you use to
-[highlight configuration text](/configuration-text/#highlighting):
+Every part of the printed text is labelled with a kind, so colour is only a
+matter of the format it is printed in. Print it with the same formatters you
+use to [highlight configuration text](/configuration-text/#printing-and-highlighting):
+`highlight.Terminal` for a terminal, or `highlight.For(os.Stdout)` to have
+xcl make the usual choice, colour for a terminal unless `NO_COLOR` is set and
+plain text otherwise:
 
 <CodeTabs>
   <div slot="go">
 
 ```go
-import "github.com/jumppad-labs/xcl/highlight"
+import (
+	"github.com/jumppad-labs/xcl"
+	"github.com/jumppad-labs/xcl/highlight"
+)
 
-os.Stdout.Write(highlight.ANSI.Render(d.Pieces()))
+xcl.PrintDiff(os.Stdout, d, xcl.WithFormatter(highlight.For(os.Stdout)))
 ```
 
   </div>
   <div slot="python">
 
-Rendering a diff, with or without colour, is not yet available from Python. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+Printing a diff, with or without colour, is not yet available from Python; richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
 
   </div>
 </CodeTabs>
 
-Added lines use the theme's inserted colour, removed ones its deleted colour,
-and changed and replaced ones its changed colour. Block headers and values are
-coloured as configuration. With no theme, the terminal renderer uses the
-terminal's standard green, red and yellow. Given a VS Code colour theme with
-`highlight.NewANSI(highlight.WithThemeFile(...))`, it uses the colours that theme gives diffs. A theme
-that sets no diff colours leaves the markers in the terminal's default colour.
+The markers and paths of added values and created entities are labelled
+`highlight.Inserted`, those of removed values and deleted entities
+`highlight.Deleted`, and those of changed values and of updated and replaced
+entities `highlight.Changed`. All three belong to the category
+`highlight.Diff`. Comment lines are labelled as comments, and block headers
+and values as configuration, exactly as configuration text is. Indentation,
+the `=` and `->` signs, placeholders and the summary line are plain text,
+which the default theme leaves unstyled.
 
-xcl never checks whether output is a terminal, so whether to ask for colour is
+With `highlight.DefaultTheme`, added lines are green, removed ones red, and
+changed and replaced ones yellow, in the terminal's own palette. Restyle them
+by extending the theme and passing it with `xcl.WithTheme`:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+theme := highlight.DefaultTheme.With(highlight.Theme{
+	highlight.Inserted: "bold green",
+	highlight.Deleted:  "bold red",
+})
+
+xcl.PrintDiff(os.Stdout, d,
+	xcl.WithFormatter(highlight.Terminal),
+	xcl.WithTheme(theme),
+)
+```
+
+  </div>
+  <div slot="python">
+
+Themes are not yet available from Python; richer printing in Python is coming.
+
+  </div>
+</CodeTabs>
+
+In a theme that leaves one of the three unstyled, it takes the style of its
+category, so styling `highlight.Diff` styles all three at once. A theme loaded from a VS Code colour theme with
+`highlight.LoadVSCodeTheme` uses the colours that theme gives diffs; extend
+`highlight.DefaultTheme` with it to keep the default colours for anything it
+leaves unstyled.
+
+xcl never colours output unless you ask for it, so whether to use colour is
 your decision. Removing the colour codes gives back exactly the plain
-rendering, and sensitive values are hidden the same way in both.
+output, and sensitive values are hidden the same way in every format.
 
-A renderer of your own sees the markers and paths labelled
-`highlight.ScopeInserted`, `highlight.ScopeDeleted` and
-`highlight.ScopeChanged`, comment lines labelled as comments, and headers and
-values labelled as configuration text. Every other piece, such as
-indentation, placeholders and the summary line, has an empty scope, so a
-renderer that escapes text sees every byte.
+For a web page, `highlight.HTML` writes the same text inside
+`<pre class="xcl">`, with a span for each labelled part carrying its
+category's class and its kind's: `xcl-diff xcl-inserted`,
+`xcl-diff xcl-deleted` or `xcl-diff xcl-changed`. `highlight.WriteCSS`
+writes a stylesheet for those classes from any theme:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+var summary strings.Builder
+if err := xcl.PrintDiff(&summary, d, xcl.WithFormatter(highlight.HTML)); err != nil {
+	return err
+}
+
+page.Execute(w, map[string]any{"Diff": template.HTML(summary.String())})
+```
+
+  </div>
+  <div slot="python">
+
+HTML output is not yet available from Python; richer printing in Python is coming.
+
+  </div>
+</CodeTabs>
+
+The output is already escaped, so it goes into an `html/template` page as
+`template.HTML`.
+
+### Writing your own format
+
+`d.Tokens()` returns the labelled tokens `xcl.PrintDiff` prints, for an
+extender writing a format of its own. Each `highlight.Token` holds its `Kind`
+and `Text`, and joining every token's text gives back exactly the plain
+output, so a format that escapes text sees every byte:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+for _, token := range d.Tokens() {
+	switch token.Kind.Parent() {
+	case highlight.Diff:
+		fmt.Printf("[%s]%s[/]", token.Kind.Class(), token.Text)
+	default:
+		fmt.Print(token.Text)
+	}
+}
+```
+
+  </div>
+  <div slot="python">
+
+Diff tokens are not yet available from Python; richer printing in Python is coming.
+
+  </div>
+</CodeTabs>
+
+A format of your own can also be passed to `xcl.PrintDiff`: implement
+`highlight.Formatter`, or wrap a function in `highlight.FormatterFunc`, and
+pass it with `xcl.WithFormatter`.
 
 ## The JSON form
 

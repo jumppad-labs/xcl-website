@@ -24,9 +24,12 @@ Python, `Config` operations raise `xcl.ConfigError`.
 
 Take a block with a misspelled attribute:
 
-```hcl title="main.xcl"
+```hcl title="config/main.xcl"
 agent "claude" {
-  modls = ["opus"]
+  description = "writes the code"
+  modls       = ["opus"]
+  timeout     = 300
+  retries     = 2
 }
 ```
 
@@ -93,7 +96,7 @@ returns the `ConfigError`'s diagnostics in the order they were found. A
 diagnostic's `Error` is a single line, made for logs:
 
 ```text
-main.xcl:2,3-8: Unsupported argument; An argument named "modls" is not expected here. (agent.claude, modls)
+config/main.xcl:3,3-8: Unsupported argument; An argument named "modls" is not expected here. (agent.claude, modls)
 ```
 
 In Python each problem has `file`, `line`, `column` and `message`, plus
@@ -102,32 +105,160 @@ them.
 
 ## Showing problems to a person
 
-`xcl.DiagnosticPieces` lays diagnostics out as a report: the severity and
-summary, where the problem is, the source around it and the detail. It returns
-labelled pieces, the same as configuration text does, so any renderer from
-[Highlighting](/configuration-text/#highlighting) can print it:
-`highlight.Text` for plain text, `highlight.ANSI` for a terminal, or a renderer
-of your own.
+`xcl.PrintError` prints an error for the person who wrote the configuration,
+in one call. Give it whatever the operation returned:
 
 ```go title="main.go"
-report := xcl.DiagnosticPieces(cfgErr.Diagnostics(), 80)
-os.Stderr.Write(highlight.ANSI.Render(report))
+import (
+	"os"
+
+	"github.com/jumppad-labs/xcl"
+)
+
+if err := c.Validate("./config"); err != nil {
+	xcl.PrintError(os.Stderr, err)
+	os.Exit(1)
+}
+```
+
+Each problem is printed as a report: the severity and summary, where the
+problem is, the numbered lines of source around it, and the detail.
+
+```text
+Error: Unsupported argument
+
+  on config/main.xcl line 3, in agent.claude, field modls:
+     1 | agent "claude" {
+     2 |   description = "writes the code"
+     3 |   modls       = ["opus"]
+     4 |   timeout     = 300
+     5 |   retries     = 2
+
+An argument named "modls" is not expected here.
+```
+
+The location line names the file, the line, the block and the field. The
+source is the line at fault with two lines either side of it, fewer at the
+start or end of the file. It was kept when the problem was found, so printing
+never opens the file again. A configuration with several problems prints one
+report for each, in the order they were found, with a blank line after each.
+
+Source lines are never wrapped. The detail is wrapped at 80 columns, and
+`xcl.WithWidth` sets another width; 0 never wraps it:
+
+```go title="main.go"
+xcl.PrintError(os.Stderr, err, xcl.WithWidth(40))
+```
+
+```text
+An argument named "modls" is not
+expected here.
+```
+
+### Wrapped errors
+
+`PrintError` finds every problem inside the error, however the application
+wrapped it, with `%w` or `errors.Join`, so a program can hand it the error it
+is about to exit with. Any other error found beside the problems is printed as
+its message, on a line of its own. The wrappers' own messages are not repeated:
+
+```go title="main.go"
+err = fmt.Errorf("loading settings: %w", errors.Join(err, errors.New("cache unavailable")))
+xcl.PrintError(os.Stderr, err)
 ```
 
 ```text
 Error: Unsupported argument
 
-  on main.xcl line 2, in agent.claude, field modls:
-     2 |   modls = ["opus"]
+  on config/main.xcl line 3, in agent.claude, field modls:
+     1 | agent "claude" {
+     2 |   description = "writes the code"
+     3 |   modls       = ["opus"]
+     4 |   timeout     = 300
+     5 |   retries     = 2
 
 An argument named "modls" is not expected here.
+
+cache unavailable
 ```
 
-The severity, and the source at fault, are labelled `highlight.ScopeError` or
-`highlight.ScopeWarning`; the rest of the source is labelled as configuration,
-so a terminal shows it coloured as it is in the editor. The second argument
-wraps the detail at that many columns, and 0 leaves it unwrapped. Source lines
-are never wrapped.
+An error with no configuration problem in it is printed as its message and a
+line break, and a nil error prints nothing.
+
+### In colour
+
+The report is plain text unless you ask for something else; xcl never decides
+on its own to colour output. `highlight.For` picks the format for where the
+report is going: colour for a terminal, plain text when the output is
+redirected or `NO_COLOR` is set.
+
+```go title="main.go"
+import (
+	"os"
+
+	"github.com/jumppad-labs/xcl"
+	"github.com/jumppad-labs/xcl/highlight"
+)
+
+xcl.PrintError(os.Stderr, err, xcl.WithFormatter(highlight.For(os.Stderr)))
+```
+
+In colour, the severity and the source at fault are styled as an error or a
+warning, and the rest of the source is coloured as configuration, the way the
+editor colours it. The formats and themes are the ones configuration text
+uses, so `highlight.HTML` puts the same report on a web page and
+`xcl.WithTheme` changes its colours; see
+[Printing and highlighting](/configuration-text/#printing-and-highlighting).
+
+### Formatting with %+v
+
+`*xclerrors.ConfigError` and `*xclerrors.Diagnostic` format themselves for the
+`fmt` package. `%+v` writes the same plain report `PrintError` prints, with the
+detail wrapped at 80 columns; `%v`, `%s` and `Error()` stay one line for each
+problem.
+
+```go title="main.go"
+var cfgErr *xclerrors.ConfigError
+if errors.As(err, &cfgErr) {
+	fmt.Fprintf(os.Stderr, "%+v", cfgErr)
+}
+```
+
+This works only on the configuration error itself: once it is wrapped with
+`fmt.Errorf`, `%+v` writes the wrapper's one-line message. `PrintError` is the
+dependable route.
+
+### In logs
+
+A structured logger that records an error's detailed formatting carries the
+report with no adapter. With [zap](https://github.com/uber-go/zap),
+`zap.Error(err)` writes the one line under `error` and the report under
+`errorVerbose`:
+
+```go title="main.go"
+logger.Error("validating configuration", zap.Error(err))
+```
+
+```json
+{
+  "level": "error",
+  "msg": "validating configuration",
+  "error": "config/main.xcl:3,3-8: Unsupported argument; An argument named \"modls\" is not expected here. (agent.claude, modls)",
+  "errorVerbose": "Error: Unsupported argument\n\n  on config/main.xcl line 3, in agent.claude, field modls:\n     1 | agent \"claude\" {\n     2 |   description = \"writes the code\"\n     3 |   modls       = [\"opus\"]\n     4 |   timeout     = 300\n     5 |   retries     = 2\n\nAn argument named \"modls\" is not expected here.\n\n"
+}
+```
+
+The entry is shown indented, and without the `ts`, `caller` and `stacktrace`
+fields zap's production logger adds. zap asks the error it is given for
+`%+v`, so log the error as `Validate`, `Apply` or `Destroy` returned it; one
+wrapped with `fmt.Errorf` is logged as its one line.
+
+`log/slog` logs the one-line message. [`events.SlogHandler`](/events/) writes
+an event's error as that line, whatever slog handler is behind it, and so does
+slog's JSON handler for an error you log yourself. slog's text handler formats
+an error value with `%+v`, so it writes the report, but as one quoted value
+with its line breaks escaped, which is not for reading. To show a person the
+report, print it with `xcl.PrintError` beside the log line.
 
 The report is not yet available from Python, where each problem prints as its
 file, line, column and message. See the <a href={pythonParityURL}>parity list</a>
@@ -137,8 +268,8 @@ for what the package offers.
 
 <CtaBanner
   heading="Colour it your way"
-  body="The report is pieces for a renderer, the same as configuration text, so a theme or renderer of your own applies to both."
+  body="The report prints in every format configuration text does, plain, a terminal's colours, HTML for a page or an SVG image, styled by the same themes, an editor's own among them."
 >
-  <Button href="/configuration-text/#highlighting" label="Highlighting →" variant="primary" large />
+  <Button href="/configuration-text/#printing-and-highlighting" label="Printing and highlighting →" variant="primary" large />
   <Button href="/language/variables-and-outputs/" label="Variables and .vars files →" variant="secondary" large />
 </CtaBanner>

@@ -222,8 +222,9 @@ knowing that it is then unprotected.
 - **The entity printer**, `logger.ResourcePrinter`, shows the marker in every
   format. `logger.WithRevealSensitive(true)` shows real values.
 - **Diffs** from `Config.Diff` report that a sensitive value changed without
-  either value, and its rendered text, `Diff.Pieces`, shows
-  `(sensitive value)`. Pass
+  either value, and the change summary `xcl.PrintDiff` prints, like the
+  tokens `(*Diff).Tokens` returns, shows `(sensitive value)`: neither ever
+  holds a value the diff result does not carry. Pass
   `diff.RevealSensitive()` to include both values. See [Diffs](/diff/).
 
 A value read back from event data has no real value to show, so it is written

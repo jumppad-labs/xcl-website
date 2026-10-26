@@ -23,8 +23,9 @@ and the Config's `EncodeSavedEntity` does the same from its saved data. In
 Python the two are `cfg.encode_entity` and `cfg.encode_saved_entity`, and the
 engine renders the text, so Python and Go write identical text for the same
 entity. Both write exactly one block, so convert several entities by calling
-once for each. Either can colour the text it writes, for a terminal or any
-other format.
+once for each. In Go the text is plain, and `xcl.PrintEntity` prints an
+entity coloured for a terminal, as HTML or as SVG in one call; in Python
+`highlight=True` colours it for a terminal.
 
 ## Converting an entity
 
@@ -364,61 +365,119 @@ secret. Written any other way it keeps `"(sensitive)"`, unless
 holds no references, so its text shows resolved values until the configuration
 is applied again.
 
-## Highlighting
+## Printing and highlighting
 
-Configuration text is always plain. Highlighting it is a second step:
-`highlight.Pieces` splits the text into pieces, each labelled with the same
-name the xcl VS Code extension gives it, and a renderer turns the pieces into
-output, so the configuration in your terminal or your page looks the way it
-does in the editor. It works on the text every option produces, including
-`xcl.ShowReferences()`, whose references are coloured like any other text.
-
-### In a terminal
-
-xcl ships a terminal renderer in the `highlight` package, `highlight.ANSI`. It
-uses only the terminal's 16 standard colours, so the result follows the
-user's own palette:
+`xcl.EncodeEntity` always gives plain text. `xcl.PrintEntity` writes the same
+text to an `io.Writer` in one call, plain, coloured for a terminal, or as HTML
+or SVG, so the configuration in your terminal or your page looks the way it
+does in the editor. It takes the encoding choices on this page in the same
+list as the printing options, so `xcl.IncludeComputed()` sits beside
+`xcl.WithFormatter(...)`:
 
 <CodeTabs>
   <div slot="go">
 
-```go
-import "github.com/jumppad-labs/xcl/highlight"
+```go title="main.go"
+import (
+	"os"
 
-text, err := xcl.EncodeEntity(entity)
+	"github.com/jumppad-labs/xcl"
+	"github.com/jumppad-labs/xcl/highlight"
+)
+
+db, err := c.FindResource("database.postgres.main")
 if err != nil {
 	return err
 }
 
-os.Stdout.Write(highlight.ANSI.Render(highlight.Pieces(text)))
+err = xcl.PrintEntity(os.Stdout, db,
+	xcl.IncludeComputed(),
+	xcl.WithFormatter(highlight.For(os.Stdout)),
+)
 ```
 
   </div>
   <div slot="python">
 
-```python
-print(cfg.encode_entity(entity, highlight=True))
+```python title="main.py"
+import sys
+
+print(cfg.encode_entity(db, include_computed=True, highlight=sys.stdout.isatty()))
 ```
 
-`highlight=True` uses the terminal renderer with no theme, and `cfg.encode_saved_entity(event.data, highlight=True)` colours a saved record the same way. It combines with every other choice.
+`highlight=True` colours the text for a terminal with xcl's default colours, and `cfg.encode_saved_entity(event.data, highlight=True)` colours a saved record the same way. It combines with every other choice. Richer printing in Python, with the formats and themes below, is coming.
 
   </div>
 </CodeTabs>
 
-xcl never checks whether output is a terminal. Whether to colour is your
-decision, so colour only when the output shows colour, and render with
-`highlight.Text`, which gives back the plain text, otherwise:
+The printing options are `xcl.WithFormatter`, which picks the format and
+defaults to `highlight.Plain`, and `xcl.WithTheme`, which picks the colours
+and defaults to `highlight.DefaultTheme`. `PrintEntity` fails with
+`xcl.ErrNotEncodable`, writing nothing, wherever `EncodeEntity` would, and
+otherwise returns the first error writing to `w`. Highlighting works on the
+text every encoding choice produces, including `xcl.ShowReferences()`, whose
+references are coloured as references. `xcl.PrintError` and `xcl.PrintDiff`
+take the same options for [an error report](/problems/) and
+[a change summary](/diff/).
+
+### Output formats
+
+A format is a `highlight.Formatter`, and the `highlight` package ships five:
+
+| Formatter | Writes |
+| --- | --- |
+| `highlight.Plain` | the text exactly as `EncodeEntity` returns it, ignoring the theme |
+| `highlight.Terminal` | the text in terminal colour codes from the theme |
+| `highlight.HTML` | a `<pre class="xcl">` block with a class on each piece of text, for a website to style |
+| `highlight.HTMLInline` | the same markup styled with `style` attributes, for places a stylesheet cannot reach, such as an email |
+| `highlight.SVG` | a standalone SVG image that carries its own colours |
 
 <CodeTabs>
   <div slot="go">
 
 ```go
-var renderer highlight.Renderer = highlight.Text
-if isTerminal(os.Stdout) {
-	renderer = highlight.ANSI
+file, err := os.Create("database.svg")
+if err != nil {
+	return err
+}
+defer file.Close()
+
+err = xcl.PrintEntity(file, db, xcl.WithFormatter(highlight.SVG))
+```
+
+  </div>
+  <div slot="python">
+
+Python offers the terminal colours of `highlight=True` and the plain text. Richer printing in Python, with HTML and SVG, is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
+
+`highlight.Terminal` writes the 16 named colours as the terminal's own
+palette, so the default theme follows the user's colours, and a `#rrggbb`
+colour as 24-bit colour. Text styled with nothing gets no colour codes at
+all. Every line is styled on its own, with a reset before each line break, so
+the text can be indented or prefixed line by line without colour leaking.
+Removing the colour codes gives back exactly the plain text.
+
+xcl never decides on its own whether to colour output: the default is plain
+text. `highlight.For(w)` makes the usual choice when you ask it to. It returns
+`highlight.Terminal` when `w` is a terminal, an `*os.File` that is a
+character device, and the `NO_COLOR` environment variable is unset or empty,
+and `highlight.Plain` for anything else, such as a file, a pipe or a buffer. A
+program that already decides colour, such as through its logging library,
+passes the formatter itself:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+formatter := highlight.Plain
+if colour {
+	formatter = highlight.Terminal
 }
 
-os.Stdout.Write(renderer.Render(highlight.Pieces(text)))
+err = xcl.PrintEntity(os.Stdout, db, xcl.WithFormatter(formatter))
 ```
 
   </div>
@@ -427,97 +486,377 @@ os.Stdout.Write(renderer.Render(highlight.Pieces(text)))
 ```python
 import sys
 
-text = cfg.encode_entity(entity, highlight=sys.stdout.isatty())
+text = cfg.encode_entity(db, highlight=sys.stdout.isatty())
 ```
 
   </div>
 </CodeTabs>
 
-Here `isTerminal` is your application's own check. The
+Here `colour` is your application's own decision. The
 [logging example](https://github.com/jumppad-labs/xcl/tree/main/example/prettylog)
-makes the same decision for its writer before asking for colour. Removing the
-colour codes from highlighted text gives back exactly the plain text, and each
-line is coloured on its own, so the text can be indented or prefixed line by
-line without colour leaking.
+makes it for its writer before asking for colour.
 
-### With an editor theme
+### Themes
 
-Give the renderer a VS Code colour theme and it colours tokens the way the
-editor does with that theme, in 24-bit colour, with the bold, italic,
-underline and strikethrough styles the theme sets:
+A `highlight.Theme` says how each kind of text looks, as a short style string
+for each `highlight.Kind` it styles, such as `highlight.Attribute` or
+`highlight.LineComment`. A style string is words separated by spaces:
+
+- `bold`, `italic`, `underline` and `dim`
+- a text colour written `#rrggbb`, or one of the named colours `black`,
+  `red`, `green`, `yellow`, `blue`, `magenta`, `cyan` and `white`, and their
+  `bright-` forms, such as `bright-red`
+- a background colour written `bg:#rrggbb`
+
+A later word for the same thing wins. `highlight.DefaultTheme` is xcl's own
+look, which uses only the named colours and leaves unlabelled text alone.
+`With` returns a copy of a theme with some kinds styled differently, leaving
+both themes as they were, and `xcl.WithTheme` prints with it:
 
 <CodeTabs>
   <div slot="go">
 
 ```go
-renderer, err := highlight.NewANSI(highlight.WithThemeFile("dark-plus.json"))
-if errors.Is(err, xcl.ErrInvalidTheme) {
-	var detail *xcl.InvalidThemeError
-	errors.As(err, &detail)
-	log.Fatalf("theme %s: %s", detail.Source, detail.Reason)
+theme := highlight.DefaultTheme.With(highlight.Theme{
+	highlight.Attribute: "#ff8800",
+	highlight.Comment:   "italic #6a9955",
+	highlight.String:    "bright-green bg:#202020",
+})
+
+err = xcl.PrintEntity(os.Stdout, db,
+	xcl.WithFormatter(highlight.Terminal),
+	xcl.WithTheme(theme),
+)
+```
+
+  </div>
+  <div slot="python">
+
+Themes are not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only, with xcl's default colours. Richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
+
+Kinds are grouped into categories, and a kind the theme does not style takes
+its category's style, then the style of `highlight.Text`, unlabelled text. So
+styling `highlight.Comment` styles every comment, line, hash and block alike,
+until the theme styles `highlight.LineComment` itself. A style is taken
+whole, never merged with its category's: a theme with
+`highlight.LineComment: "#ff0000"` writes line comments red and not italic,
+whatever `Comment` says. `kind.Parent()` gives a kind's category.
+
+A word a style does not understand, such as a misspelt colour, is skipped
+when printing, so a theme never stops output. `Validate` reports every such
+word, as one error for each joined together, each matching
+`xcl.ErrInvalidStyle` with an `xcl.InvalidStyleError` detail naming the kind,
+the style and the word:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+theme := highlight.DefaultTheme.With(highlight.Theme{
+	highlight.Attribute: "bold orang",
+})
+
+if err := theme.Validate(); err != nil {
+	log.Print(err)
 }
 ```
 
   </div>
   <div slot="python">
 
-Editor themes are not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only, with the terminal's 16 standard colours. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+Themes are not yet available from Python. Richer printing in Python is coming.
 
   </div>
 </CodeTabs>
 
-`highlight.WithTheme` reads the theme from an `io.Reader` instead. The theme
-is the JSON file a VS Code theme extension ships, and comments and trailing
-commas are allowed, as the editor allows them. Only its `tokenColors` are
-used, and a token the theme has no rule for keeps the terminal's default
-colour. A theme that cannot be read, or is not valid, fails when the renderer
-is created with `xcl.ErrInvalidTheme`, rather than quietly falling back to
-the default colours. A theme that relies on `include` is rejected the same
-way, since it does not hold its own `tokenColors`.
+```text
+style "bold orang" for Attribute: unknown word "orang"
+```
 
-### Writing a renderer
+Printed with that theme, attributes are bold and keep the terminal's own
+colour.
 
-A renderer has one method, `Render(pieces []highlight.Piece) []byte`, and is
-given every piece of the text at once, in order, so it can reason across
-them, such as by line. Each `highlight.Piece` has a `Scope`, the TextMate
-scope the xcl-vscode grammar gives it, such as `storage.type.xcl` for a block
-type or `variable.other.property.xcl` for an attribute name, and its `Text`.
-Text the grammar leaves unlabelled, such as whitespace, braces and commas, is a
-piece too, with an empty scope, so a renderer for a format that needs escaping
-sees every byte. `highlight.RendererFunc` turns a function over all the pieces
-into a renderer, and `highlight.PieceFunc` one that styles each piece on its
-own, joining what it returns:
+### With an editor theme
+
+`highlight.LoadVSCodeTheme` reads a VS Code colour theme and returns the
+`highlight.Theme` it gives xcl's kinds, so tokens look the way the editor
+shows them with that theme. The theme holds only the kinds the VS Code theme
+styles; extend the default with it to keep xcl's style for the rest:
 
 <CodeTabs>
   <div slot="go">
 
 ```go
-renderer := highlight.PieceFunc(func(piece highlight.Piece) string {
-	text := html.EscapeString(piece.Text)
-	if piece.Scope == "" {
-		return text
-	}
+file, err := os.Open("dark-plus.json")
+if err != nil {
+	return err
+}
+defer file.Close()
 
-	class := strings.ReplaceAll(strings.TrimSuffix(piece.Scope, ".xcl"), ".", "-")
-	return `<span class="` + class + `">` + text + `</span>`
-})
+loaded, err := highlight.LoadVSCodeTheme(file)
+if errors.Is(err, xcl.ErrInvalidTheme) {
+	var detail *xcl.InvalidThemeError
+	errors.As(err, &detail)
+	log.Fatalf("theme: %s", detail.Reason)
+}
 
-page := renderer.Render(highlight.Pieces(text))
+theme := highlight.DefaultTheme.With(loaded)
+
+err = xcl.PrintEntity(os.Stdout, db,
+	xcl.WithFormatter(highlight.Terminal),
+	xcl.WithTheme(theme),
+)
 ```
 
   </div>
   <div slot="python">
 
-Writing a renderer is not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+Editor themes are not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only, with xcl's default colours. Richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
 
   </div>
 </CodeTabs>
 
-Every scope is exported as a string constant named `highlight.Scope...`, such as
-`highlight.ScopeAttribute` and `highlight.ScopeReference`, so a renderer can
-compare against them, or match a family by prefix, such as every scope
-starting with `comment.`. `highlight.Pieces` labels any configuration text you
-already hold, not only text encoded from an entity.
+The theme is the JSON file a VS Code theme extension ships, and comments and
+trailing commas are allowed, as the editor allows them. Only its
+`tokenColors` are used: their text colours and their bold, italic and
+underline styles. Each kind is styled as the theme styles its TextMate scope,
+`kind.Scope()`, the name the xcl VS Code extension gives the same text, such
+as `variable.other.property.xcl` for `highlight.Attribute`, by the editor's
+own matching rules. In a terminal the theme's colours print as 24-bit colour,
+and the loaded theme works with every other format too, including the
+stylesheet below.
+
+A theme that cannot be read, or is not valid, returns an error matching
+`xcl.ErrInvalidTheme` rather than quietly falling back to the default
+colours, and its `xcl.InvalidThemeError` detail says what was wrong, such as
+`tokenColors[0].settings.foreground "#zz0000" is not a colour`. A theme that
+relies on `include` is rejected the same way, since it does not hold its own
+`tokenColors`.
+
+### On a website
+
+`highlight.HTML` writes one `<pre class="xcl">` block for a page. Each piece
+of text that is not `highlight.Text` is in a `<span>` with its category's
+class first, when its kind belongs to a category, then its kind's own, such as
+`<span class="xcl-comment xcl-line-comment">`. Unlabelled text, such as
+whitespace and braces, is written without a span, and all of it is escaped.
+The theme is ignored, so your own stylesheet decides the colours. The
+`database.postgres.main` entity above prints as:
+
+```html
+<pre class="xcl"><span class="xcl-block xcl-block-type">database</span> <span class="xcl-label xcl-type-label">&quot;postgres&quot;</span> <span class="xcl-label xcl-name-label">&quot;main&quot;</span> {
+  <span class="xcl-attribute">location</span> <span class="xcl-operator">=</span> <span class="xcl-string">&quot;localhost&quot;</span>
+  <span class="xcl-attribute">port</span>     <span class="xcl-operator">=</span> <span class="xcl-number">5432</span>
+
+  <span class="xcl-block xcl-nested-block">timeouts</span> {
+    <span class="xcl-attribute">connection</span> <span class="xcl-operator">=</span> <span class="xcl-number">10</span>
+    <span class="xcl-attribute">keep_alive</span> <span class="xcl-operator">=</span> <span class="xcl-number">60</span>
+  }
+}
+</pre>
+```
+
+The class names are a public contract, the same in every language xcl is used
+from. Each kind's class is `xcl-` and its name in kebab case, and a kind that
+is a category of its own, such as `highlight.Attribute`, has one class:
+
+| Category | Category class | Kinds in it |
+| --- | --- | --- |
+| `Block` | `xcl-block` | `BlockType` `xcl-block-type`, `NestedBlock` `xcl-nested-block` |
+| `Label` | `xcl-label` | `TypeLabel` `xcl-type-label`, `NameLabel` `xcl-name-label` |
+| `Attribute` | `xcl-attribute` | |
+| `String` | `xcl-string` | `StringEscape` `xcl-string-escape`, `Heredoc` `xcl-heredoc`, `HeredocMarker` `xcl-heredoc-marker`, `HeredocOperator` `xcl-heredoc-operator` |
+| `Number` | `xcl-number` | |
+| `Constant` | `xcl-constant` | |
+| `Function` | `xcl-function` | `BuiltinFunction` `xcl-builtin-function` |
+| `Reference` | `xcl-reference` | `Member` `xcl-member` |
+| `Operator` | `xcl-operator` | |
+| `Punctuation` | `xcl-punctuation` | `InterpolationBegin` `xcl-interpolation-begin`, `InterpolationEnd` `xcl-interpolation-end`, `TemplateDirective` `xcl-template-directive`, `Accessor` `xcl-accessor` |
+| `Comment` | `xcl-comment` | `LineComment` `xcl-line-comment`, `HashComment` `xcl-hash-comment`, `BlockComment` `xcl-block-comment` |
+| `Diff` | `xcl-diff` | `Inserted` `xcl-inserted`, `Deleted` `xcl-deleted`, `Changed` `xcl-changed` |
+| `Problem` | `xcl-problem` | `Error` `xcl-error`, `Warning` `xcl-warning` |
+| `Report` | `xcl-report` | `Summary` `xcl-summary`, `Location` `xcl-location`, `Gutter` `xcl-gutter`, `Detail` `xcl-detail` |
+
+The `Diff` kinds mark what a change summary changes, and the `Problem` and
+`Report` kinds the parts of an error report, so one stylesheet styles all
+three outputs. `kind.Class()` gives a kind's class.
+
+`highlight.WriteCSS` writes a stylesheet for these classes from any theme, the
+default, your own or one loaded from the editor, as a starting point for your
+site's styles. Every rule is scoped under `.xcl`, and categories come before
+the kinds in them, so a kind's own rule wins:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+file, err := os.Create("xcl.css")
+if err != nil {
+	return err
+}
+defer file.Close()
+
+err = highlight.WriteCSS(file, highlight.DefaultTheme)
+```
+
+  </div>
+  <div slot="python">
+
+HTML output and stylesheets are not yet available from Python. Richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
+
+```css title="xcl.css"
+.xcl .xcl-block { color: #bc3fbc; font-weight: bold; }
+.xcl .xcl-label { color: #0dbc79; }
+.xcl .xcl-type-label { color: #11a8cd; }
+.xcl .xcl-attribute { color: #2472c8; }
+.xcl .xcl-string { color: #e5e510; }
+.xcl .xcl-comment { color: #666666; font-style: italic; }
+```
+
+Named colours are written as fixed hex colours, the same in every language,
+and `dim` as opacity.
+
+The HTML is already escaped, so in Go it goes into an `html/template` page as
+`template.HTML`, which the template writes as it is:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+var entity strings.Builder
+if err := xcl.PrintEntity(&entity, db, xcl.WithFormatter(highlight.HTML)); err != nil {
+	return err
+}
+
+page.Execute(w, map[string]any{"Entity": template.HTML(entity.String())})
+```
+
+  </div>
+  <div slot="python">
+
+HTML output is not yet available from Python. Richer printing in Python is coming.
+
+  </div>
+</CodeTabs>
+
+The xcl repository publishes reference outputs in
+[`highlight/testdata/reference`](https://github.com/jumppad-labs/xcl/tree/main/highlight/testdata/reference):
+a resource, an error report and a change summary in every built-in format with
+the default theme, the stylesheet `WriteCSS` writes for the default theme,
+and `classes.txt`, every class name. They are the contract every language
+follows: each language's printing is checked against the same files, byte for
+byte.
+
+### Writing a format
+
+A format of your own is a `highlight.Formatter`, whose one method,
+`Format(w io.Writer, theme highlight.Theme, tokens []highlight.Token) error`,
+is given every token of the text at once, in order, so it can reason across
+them, such as by line. Each `highlight.Token` has a `Kind` and its `Text`.
+Unlabelled text, such as whitespace, braces and commas, is a token of kind
+`highlight.Text`, so the tokens hold every byte exactly once and a format that
+needs escaping sees all of it. `highlight.FormatterFunc` turns a function into
+a formatter, and `theme.Style(token.Kind)` resolves a token's style the way the
+built-in formats do, through its category and `Text`:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+var bbcode highlight.Formatter = highlight.FormatterFunc(
+	func(w io.Writer, theme highlight.Theme, tokens []highlight.Token) error {
+		var out strings.Builder
+		for _, token := range tokens {
+			style := theme.Style(token.Kind)
+
+			text := token.Text
+			if style.Bold {
+				text = "[b]" + text + "[/b]"
+			}
+			if style.Italic {
+				text = "[i]" + text + "[/i]"
+			}
+			if style.Foreground != "" {
+				text = "[color=" + style.Foreground.Hex() + "]" + text + "[/color]"
+			}
+
+			out.WriteString(text)
+		}
+
+		_, err := io.WriteString(w, out.String())
+		return err
+	},
+)
+
+err = xcl.PrintEntity(os.Stdout, db, xcl.WithFormatter(bbcode))
+```
+
+  </div>
+  <div slot="python">
+
+Writing a format is not yet available from Python; `cfg.encode_entity` and `cfg.encode_saved_entity` offer `highlight=True` only. Richer printing in Python is coming. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+</CodeTabs>
+
+For the same entity it prints:
+
+```text
+[color=#bc3fbc][b]database[/b][/color] [color=#11a8cd]"postgres"[/color] [color=#0dbc79]"main"[/color] {
+  [color=#2472c8]location[/color] = [color=#e5e510]"localhost"[/color]
+  [color=#2472c8]port[/color]     = [color=#d670d6]5432[/color]
+
+  [color=#bc3fbc][b]timeouts[/b][/color] {
+    [color=#2472c8]connection[/color] = [color=#d670d6]10[/color]
+    [color=#2472c8]keep_alive[/color] = [color=#d670d6]60[/color]
+  }
+}
+```
+
+`style.Foreground.Hex()` gives a named colour as the same fixed hex colour the
+HTML and SVG formats use. A format can also match a kind or its category
+directly, such as `token.Kind.Parent() == highlight.Comment` for every kind
+of comment, and `token.Kind.Class()` and `token.Kind.Scope()` give its HTML
+class and TextMate scope.
+
+To format the tokens yourself, `xcl.EntityTokens` returns an entity's
+configuration text labelled, taking the same encoding choices as
+`EncodeEntity`, and `highlight.Tokenize` labels any configuration text you
+already hold, such as a file read from disk, not only text encoded from an
+entity. Joined, the tokens' text is exactly the text they were made from:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+tokens, err := xcl.EntityTokens(db, xcl.IncludeComputed())
+if err != nil {
+	return err
+}
+
+err = bbcode.Format(os.Stdout, highlight.DefaultTheme, tokens)
+
+src, err := os.ReadFile("main.xcl")
+if err != nil {
+	return err
+}
+
+err = highlight.Terminal.Format(os.Stdout, highlight.DefaultTheme, highlight.Tokenize(src))
+```
+
+  </div>
+  <div slot="python">
+
+Labelled tokens are not yet available from Python. Richer printing in Python is coming.
+
+  </div>
+</CodeTabs>
 
 ## For reading, not reprocessing
 
