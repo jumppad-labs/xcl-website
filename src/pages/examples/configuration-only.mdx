@@ -649,7 +649,7 @@ def run(path: str) -> None:
         # events carry nothing by default, this asks for each entity as it
         # is processed, which is what the receiver turns back into
         # configuration text. Sensitive fields are redacted in events.
-        event_data="processed",
+        event_data=xcl.EventDataLevel.PROCESSED,
     )
 
     for route in ingress_routes(cfg):

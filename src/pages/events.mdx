@@ -188,7 +188,7 @@ event_mask = xcl.mask.hmac_sha256(correlation_key)
 
 cfg = xcl.Config(
     on_event=handler,
-    event_data="processed",
+    event_data=xcl.EventDataLevel.PROCESSED,
     event_mask=event_mask,
 )
 ```
@@ -200,8 +200,9 @@ Any masker works here, including the built-ins `mask.Omit()`, which writes no
 value, `mask.EncryptAES256GCM(key)` and your own. When every receiver is
 trusted with secrets, `xcl.WithNoEventMask()` turns masking off and event data
 carries the real values. When both options are given, the last one wins. In
-Python the options are `event_data="none"`, `"raw"` or `"processed"`,
-`event_mask=` with one of the `xcl.mask` built-ins, and `no_event_mask=True`.
+Python the options are `event_data=` with an `xcl.EventDataLevel` (`NONE`,
+`RAW` or `PROCESSED`), `event_mask=` with one of the `xcl.mask` built-ins, and
+`no_event_mask=True`.
 
 Event masking changes only `Data`. Errors and log details always show
 `(sensitive)`, whatever the event masker, because the sensitive type formats
