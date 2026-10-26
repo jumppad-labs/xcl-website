@@ -105,6 +105,47 @@ It takes the same keyword choices as `cfg.encode_entity`, such as `cfg.encode_sa
   </div>
 </CodeTabs>
 
+A saved record can be rendered at any time, including from an event handler
+while an operation is still running, because rendering it reads none of the
+Config's entities. That is how a program shows each resource as it is
+created, beneath its success event, rather than all at the end. The text is
+the same as the same call gives once the operation has finished:
+
+<CodeTabs>
+  <div slot="go">
+
+```go
+handler := func(e xcl.Event) {
+	if e.Operation == "create" && e.Phase == "success" {
+		text, err := c.EncodeSavedEntity(e.Data)
+		if err == nil {
+			fmt.Println(string(text))
+		}
+	}
+}
+```
+
+  </div>
+  <div slot="python">
+
+```python
+def on_event(event):
+    if event.operation == "create" and event.phase == "success":
+        print(cfg.encode_saved_entity(event.data, include_computed=True))
+```
+
+Rendering a looked-up or edited entity with `cfg.encode_entity` is refused
+while an operation runs, from an event handler too, with
+`xcl.OperationInProgressError`: it reads the engine's own copy of the entity,
+which the operation is still changing. Render the event's saved record with
+`cfg.encode_saved_entity(event.data)` instead.
+
+  </div>
+</CodeTabs>
+
+Variables and outputs have create success events too. Their records are not
+configuration, so rendering one fails with `xcl.ErrNotEncodable`.
+
 The text is identical to what `EncodeEntity` returns for the same entity. A
 record naming a type the Config does not know fails with
 `xcl.ErrUnregisteredType`, data that is not one saved record with
@@ -139,7 +180,7 @@ if entity is None:
 text = cfg.encode_entity(entity)
 ```
 
-An event entity kept and encoded after its operation has finished shows the engine's current value with `reveal_sensitive=True`, where Go's event data always shows the marker.
+`cfg.encode_entity(entity)` works once the operation has finished: while it is running, from inside the handler too, it raises `xcl.OperationInProgressError`. From inside the handler, `cfg.encode_saved_entity(event.data)` gives the same text. An event entity kept and encoded after its operation has finished shows the engine's current value with `reveal_sensitive=True`, where Go's event data always shows the marker.
 
   </div>
 </CodeTabs>

@@ -212,9 +212,12 @@ a hash, data from a different masker or data under a different key, fails with
 `xcl.ErrUnrecoverable` and returns no value. `Event.Entity()` and
 `c.EncodeSavedEntity`, `event.entity()` and `cfg.encode_saved_entity` in
 Python, show every masked value as `(sensitive)`. In Python,
-`cfg.encode_entity(event.entity())` turns the entity an event carries into
-configuration text directly; with `reveal_sensitive=True` it shows the
-engine's current value, not the masked one, once the operation has finished.
+`cfg.encode_saved_entity(event.data)` turns the record an event carries into
+configuration text at any time, from inside the handler while the operation
+runs too. `cfg.encode_entity(event.entity())` does the same once the
+operation has finished, and is refused with `xcl.OperationInProgressError`
+while it runs; with `reveal_sensitive=True` it shows the engine's current
+value, not the masked one.
 
 To keep secrets out of the state file as well, see
 [State masking](/state-masking/).
