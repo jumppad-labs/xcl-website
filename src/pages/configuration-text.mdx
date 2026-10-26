@@ -100,7 +100,7 @@ text, err := c.EncodeSavedEntity(event.Data)
 text = cfg.encode_saved_entity(event.data)
 ```
 
-It takes the same keyword choices as `cfg.encode_entity`, such as `cfg.encode_saved_entity(event.data, include_computed=True)`. Here `event` is the `xcl.Event` an `on_event` handler receives, and `event.data` holds the saved record when the Config was created with `event_data="processed"`. With `xcl.aio.Config` the call is `await cfg.encode_saved_entity(event.data)`.
+It takes the same keyword choices as `cfg.encode_entity`, such as `cfg.encode_saved_entity(event.data, include_computed=True)`. Here `event` is the `xcl.Event` an `on_event` handler receives, and `event.data` holds the saved record when the Config was created with `event_data=xcl.EventDataLevel.PROCESSED`. With `xcl.aio.Config` the call is `await cfg.encode_saved_entity(event.data)`.
 
   </div>
 </CodeTabs>

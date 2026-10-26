@@ -1133,7 +1133,7 @@ def new_config(handler, docker_plugin: str, state_dir: str) -> xcl.Config:
         # events carry nothing by default, this asks for each entity as
         # state records it, which is what the receiver turns back into
         # configuration text
-        event_data="processed",
+        event_data=xcl.EventDataLevel.PROCESSED,
     )
 ```
 
