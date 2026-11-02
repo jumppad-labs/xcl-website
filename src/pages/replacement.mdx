@@ -70,22 +70,35 @@ without asking, since there is nothing trustworthy to compare against.
 ## DefaultChanged
 
 Embed `plugins.DefaultChanged[T]` in a provider to get a `Changed` method.
-It compares the JSON form of `old` and `new`, ignoring xcl's own metadata
-(`meta`, `depends_on` and `disabled`), and answers `entity.Update` when they
-differ and `entity.NoChange` when they do not:
+List the settings that cannot change in place once, as its `ReplaceOn`, when
+the provider's constructor builds it:
 
 ```go title="provider.go"
 type MyProvider struct {
 	plugins.DefaultChanged[*MyEntity]
 }
+
+func NewMyProvider() *MyProvider {
+	return &MyProvider{
+		DefaultChanged: plugins.DefaultChanged[*MyEntity]{
+			ReplaceOn: []entity.Path{entity.Path{}.Attribute("subnet")},
+		},
+	}
+}
 ```
 
-`DefaultChanged` ignores both `changes` and `dependencies` and never answers
-`entity.Replace`.
-A provider that cannot change some settings in place, or that must react to a
-replaced dependency, defines its own `Changed` and defers to `DefaultChanged`
-for everything else, as the Docker example [below](#a-worked-example-docker)
-does.
+It answers `entity.Replace` when one of the `changes` is at or under a
+`ReplaceOn` setting, matched as `change.Within` matches it, whether the new
+value is known yet or not. Otherwise it compares the JSON form of `old` and
+`new`, ignoring xcl's own metadata (`meta`, `depends_on` and `disabled`), and
+answers `entity.Update` when they differ and `entity.NoChange` when they do
+not. Left empty, `ReplaceOn` replaces on nothing.
+
+`DefaultChanged` ignores `dependencies`: what a replaced or updated
+dependency means is the provider's to decide. A provider that must react to
+one defines its own `Changed`, handles its dependencies there and defers to
+`DefaultChanged` for the rest, so its replace settings are never repeated, as
+the Docker plugin [below](#a-worked-example-docker) does.
 
 ## What an entity is told about its dependencies
 
@@ -236,87 +249,85 @@ it shows as a destroy followed by a create of the same entity.
 
 ## A worked example: Docker
 
-The [plugins example](/examples/plugins/) ships an external Docker plugin with
-a network and a container. Docker cannot move a network to a new address
-range, so the network provider answers replace when a change falls within
-`subnet`. Any other change to its settings answers update, which needs no
-Docker call, and when nothing changed it leaves the decision to
-`DefaultChanged`:
+The [Docker plugin](https://github.com/jumppad-labs/xcl-plugin-docker),
+which grew out of the [plugins example](/examples/plugins/), has a network
+and a container. Docker cannot move a network to a new address range, so
+`subnet` is the network's one `ReplaceOn` setting, and `DefaultChanged`
+answers replace when a change falls within it. Any other change to its
+settings answers update, which needs no Docker call:
 
-```go title="example/plugin/plugins/docker/providers/network.go"
+```go title="xcl-plugin-docker: providers/network.go"
+func NewNetworkProvider(tasks containers.Tasks) plugins.ResourceProvider[*entities.Network] {
+	return &networkProvider{
+		DefaultChanged: plugins.DefaultChanged[*entities.Network]{ReplaceOn: networkReplaceSettings},
+		tasks:          tasks,
+	}
+}
+
+// Changed decides from what it is told. DefaultChanged answers replace when
+// the subnet changed, one of the ReplaceOn settings the constructor gives it:
+// Docker can not move a network to a new address range, the network has to be
+// removed and created again. Any other change to its settings answers update,
+// which needs no Docker call, even one DefaultChanged's comparison doesn't
+// see, such as xcl's own metadata.
+func (p *networkProvider) Changed(ctx context.Context, old *entities.Network, new *entities.Network, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
+	change, err := p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
+	if err != nil {
+		return entity.NoChange, err
+	}
+
+	if change == entity.NoChange && len(changes) > 0 {
+		return entity.Update, nil
+	}
+
+	return change, nil
+}
+
 // networkReplaceSettings are the settings Docker fixes when it creates a
 // network, a change to any of them needs a new network
 var networkReplaceSettings = []entity.Path{
 	entity.Path{}.Attribute("subnet"),
 }
-
-// Changed decides from what it is told. It answers replace when the subnet
-// changed: Docker can not move a network to a new address range, the network
-// has to be removed and created again. Any other change to its settings
-// answers update, which needs no Docker call. When nothing changed the
-// decision is left to DefaultChanged.
-func (p *networkProvider) Changed(ctx context.Context, old *entities.Network, new *entities.Network, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
-	for _, change := range changes {
-		for _, setting := range networkReplaceSettings {
-			if change.Within(setting) {
-				return entity.Replace, nil
-			}
-		}
-	}
-
-	if len(changes) > 0 {
-		return entity.Update, nil
-	}
-
-	return p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
-}
 ```
 
 The container provider decides only from what it is told. Docker fixes a
-container's image, command, environment and mounts when it creates it, so a
-change within `image`, `command`, `environment` or `init_script` is a
-replacement. So is a replaced dependency that isn't a Docker network: the init
-script is `template.init.destination`, and when that template is replaced the
+container's image, command, environment and mounts when it creates it, so
+`image`, `command`, `environment` and `init_script` are its `ReplaceOn`
+settings. A replaced dependency that isn't a Docker network is a replacement
+too, and that rule stays in `Changed`: the init script is
+`template.init.destination`, and when that template is replaced the
 container that mounts it is replaced too. Any other change to its own
 settings, such as a `network` block added, removed or given new aliases,
 answers update, and so does a network it depends on being updated or
 replaced. A dependency that is only updated, such as the init template
-rendering new content to the same file, is left to `DefaultChanged`, which
-leaves the container alone:
+rendering new content to the same file, leaves the container alone:
 
-```go title="example/plugin/plugins/docker/providers/container.go"
-// replaceSettings are the settings Docker fixes when it creates a container,
-// a change to any of them needs a new container
-var replaceSettings = []entity.Path{
-	entity.Path{}.Attribute("image"),
-	entity.Path{}.Attribute("command"),
-	entity.Path{}.Attribute("environment"),
-	entity.Path{}.Attribute("init_script"),
-}
-
-// Changed decides from what it is told. It answers replace when the image,
-// command, environment or init script changed, since Docker fixes them when
-// it creates a container, or when a dependency other than a Docker network is
-// replaced, such as the template that renders the init script. A change to
+```go title="xcl-plugin-docker: providers/container.go"
+// Changed decides from what it is told. It answers replace when a dependency
+// other than a Docker network is replaced, such as the template that renders
+// the init script. DefaultChanged answers replace when the image, command,
+// environment or init script changed, the ReplaceOn settings the constructor
+// gives it, since Docker fixes them when it creates a container. A change to
 // the container's networks, or a network that is updated or replaced, is
 // handled in place by Update, which moves the running container between
-// networks. Any other change to its settings answers update. A dependency
-// that is only updated, such as the init script's template rendering new
-// content, leaves the container alone: the decision is left to
-// DefaultChanged.
+// networks. Any other change to its settings answers update, even one
+// DefaultChanged's comparison doesn't see, such as xcl's own metadata. A
+// dependency that is only updated, such as the init script's template
+// rendering new content, leaves the container alone.
 func (p *containerProvider) Changed(ctx context.Context, old *entities.Container, new *entities.Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (entity.Change, error) {
-	for _, change := range changes {
-		for _, setting := range replaceSettings {
-			if change.Within(setting) {
-				return entity.Replace, nil
-			}
-		}
-	}
-
 	for _, dependency := range dependencies {
 		if dependency.Change == entity.Replace && !isNetworkAddress(dependency.Address) {
 			return entity.Replace, nil
 		}
+	}
+
+	change, err := p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
+	if err != nil {
+		return entity.NoChange, err
+	}
+
+	if change != entity.NoChange {
+		return change, nil
 	}
 
 	if len(changes) > 0 {
@@ -329,7 +340,16 @@ func (p *containerProvider) Changed(ctx context.Context, old *entities.Container
 		}
 	}
 
-	return p.DefaultChanged.Changed(ctx, old, new, changes, dependencies)
+	return entity.NoChange, nil
+}
+
+// replaceSettings are the settings Docker fixes when it creates a container,
+// a change to any of them needs a new container
+var replaceSettings = []entity.Path{
+	entity.Path{}.Attribute("image"),
+	entity.Path{}.Attribute("command"),
+	entity.Path{}.Attribute("environment"),
+	entity.Path{}.Attribute("init_script"),
 }
 ```
 
@@ -342,7 +362,7 @@ whose aliases changed, connects the new ones, connects again every network
 whose dependency was replaced, and reads the container's new address once if
 anything moved:
 
-```go title="example/plugin/plugins/docker/providers/container.go"
+```go title="xcl-plugin-docker: providers/container.go"
 func (p *containerProvider) Update(ctx context.Context, c *entities.Container, changes []entity.PropertyChange, dependencies []entity.DependencyChange) (*entities.Container, error) {
 	previous, err := previousAttachments(c.Networks, changes)
 	if err != nil {

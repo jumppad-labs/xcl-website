@@ -18,7 +18,7 @@ import { templateURL } from "../config/site";
 <Prose>
 
 Every xcl plugin uses one layout, whether it runs inside an application or as
-a separate program. The [plugin template](https://github.com/jumppad-labs/xcl-plugin-template) is that layout's
+a separate program. The [plugin template](https://github.com/jumppad-labs/xcl-plugin-template-go) is that layout's
 worked example. Its one entity type, `notes "note"`, writes a note to a file, so
 it needs no Docker, no cloud account and no service: a repository made from
 it builds, passes its tests and applies its sample straight away.
@@ -87,19 +87,26 @@ var ReplaceSettings = []entity.Path{
 }
 ```
 
-`Changed` answers replace for a change within one of them or for a replaced
-dependency, update for any other change, and leaves the rest to
-`DefaultChanged`. `Update` then acts only on the changes it is given: a
+The provider's constructor hands that list to `DefaultChanged` as its
+`ReplaceOn`, so the decision is declared once rather than written as a loop:
+
+```go title="providers/note.go"
+DefaultChanged: plugins.DefaultChanged[*entities.Note]{ReplaceOn: ReplaceSettings},
+```
+
+`Changed` answers replace for a replaced dependency, and otherwise defers to
+`DefaultChanged`, which answers replace for a change within one of the
+settings in `ReplaceOn`. Any other change is an update. `Update` then acts only on the changes it is given: a
 `content` change rewrites the file, a `mode` change alone only changes its
 mode, and it never looks the file up to find out what it was. See
 [Unchanged, update or replace](/replacement/) for how xcl calls them.
 
 ## Start from the template
 
-Click **Use this template** on the [template repository](https://github.com/jumppad-labs/xcl-plugin-template), or:
+Click **Use this template** on the [template repository](https://github.com/jumppad-labs/xcl-plugin-template-go), or:
 
 ```shell
-gh repo create <you>/xcl-plugin-<name> --template jumppad-labs/xcl-plugin-template --public --clone
+gh repo create <you>/xcl-plugin-<name> --template jumppad-labs/xcl-plugin-template-go --public --clone
 ```
 
 Name the repository after your plugin: the GitHub registry installs a plugin
@@ -137,7 +144,7 @@ application registers the plugin one way or the other on a
 ```go title="main.go"
 local := registry.NewLocal()
 local.RegisterPlugin(&notes.Plugin{})                       // in-process
-local.RegisterExternalPlugin("./build/xcl-plugin-template") // a separate program
+local.RegisterExternalPlugin("./build/xcl-plugin-template-go") // a separate program
 ```
 
   </div>
@@ -146,7 +153,7 @@ local.RegisterExternalPlugin("./build/xcl-plugin-template") // a separate progra
 ```python title="main.py"
 # in-process registration has no Python form: Python loads Go plugins as separate programs
 local = xcl.LocalRegistry()
-local.register_external_plugin("./build/xcl-plugin-template")  # a separate program
+local.register_external_plugin("./build/xcl-plugin-template-go")  # a separate program
 ```
 
   </div>
@@ -159,19 +166,25 @@ make release VERSION=v0.1.0
 ```
 
 Pushes the tag. The release workflow runs the tests, builds the plugin for
-linux, darwin and windows on amd64 and arm64, signs the checksums with the
-key in the repository's `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` secrets, and
-publishes a GitHub release holding:
+linux, darwin and windows on amd64 and arm64 with `make dist`, signs the
+release's index with the key in the repository's `GPG_PRIVATE_KEY` and
+`GPG_PASSPHRASE` secrets, and publishes a GitHub release holding:
 
-- `<name>_<version>_<os>_<arch>.tar.gz`, `.zip` on windows, with the binary
-  at its root;
-- `<name>_<version>_checksums.txt`, the SHA-256 of every archive;
-- `<name>_<version>_checksums.txt.sig`, an armoured detached signature over
-  the checksums.
+- `<name>-<version>-<os>-<arch>.zip` for each platform, holding the binary,
+  the README, the LICENSE and an `xcl-plugin.xcl` manifest naming the plugin,
+  its version, the command that starts it and its platform;
+- `<name>-<version>-index.xcl`, the release's index, listing every zip with
+  its SHA-256;
+- `<name>-<version>-index.xcl.sig`, an armoured detached signature over the
+  index. The index holds every zip's checksum, so the one signature covers
+  the whole release.
 
+`<name>` is the repository name and `<version>` the tag without its `v`.
 Without the signing key the workflow fails before building, so an unsigned
 release is never published. `make dist VERSION=v0.0.0-snapshot` builds the
-same archives locally, unsigned.
+same zips and index locally, unsigned. [Installing plugins from
+GitHub](/github-registry/#what-a-release-must-contain) describes the layout
+in full.
 
 ## Install
 
@@ -234,7 +247,7 @@ if err != nil {
 }
 
 gh := registry.NewGitHub(registry.GitHubTrustedKeys(string(publicKey)))
-gh.RegisterPlugin("jumppad-labs/xcl-plugin-template", "v0.1.0")
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-template-go", "v0.1.0")
 ```
 
   </div>
@@ -246,7 +259,7 @@ from pathlib import Path
 public_key = Path("jumppad-labs-releases.asc").read_text()
 
 gh = xcl.GitHubRegistry(trusted_keys=[public_key])
-gh.register_plugin("jumppad-labs/xcl-plugin-template", "v0.1.0")
+gh.register_plugin("jumppad-labs/xcl-plugin-template-go", "v0.1.0")
 ```
 
   </div>

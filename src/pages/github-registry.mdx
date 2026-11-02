@@ -31,7 +31,7 @@ registry to the `Config` like any other:
 
 ```go title="main.go"
 gh := registry.NewGitHub()
-gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "v0.3.0")
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "v0.4.1")
 
 c, err := xcl.NewConfig(
 	xcl.WithRegistry(local), // your own types and plugins
@@ -47,7 +47,7 @@ if err != nil {
 
 ```python title="main.py"
 github = xcl.GitHubRegistry()
-github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.3.0")
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.4.1")
 
 with xcl.Config(
     registries=[
@@ -70,7 +70,7 @@ cache, at the start of the first `Validate`, `Apply`, `Destroy`, `Diff` or
 ## Pinning a version
 
 A plugin is pinned to one exact release tag: `v<major>.<minor>.<patch>`, with
-an optional pre-release suffix such as `v0.3.0-rc.1`. There is no `latest` and
+an optional pre-release suffix such as `v0.5.0-rc.1`. There is no `latest` and
 no range, so the same configuration always runs the same plugin, and nothing
 checks for newer releases. A wrong declaration is a programmer error and
 panics at the `RegisterPlugin` line, naming the plugin, before anything is
@@ -81,9 +81,9 @@ downloaded:
 
 ```go title="main.go"
 gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "latest") // panics
-gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "~0.3")   // panics
-gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "0.3.0")  // panics, the tag has a v
-gh.RegisterPlugin("xcl-plugin-docker", "v0.3.0")              // panics, not owner/repo
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "~0.4")   // panics
+gh.RegisterPlugin("jumppad-labs/xcl-plugin-docker", "0.4.1")  // panics, the tag has a v
+gh.RegisterPlugin("xcl-plugin-docker", "v0.4.1")              // panics, not owner/repo
 ```
 
   </div>
@@ -91,9 +91,9 @@ gh.RegisterPlugin("xcl-plugin-docker", "v0.3.0")              // panics, not own
 
 ```python title="main.py"
 github.register_plugin("jumppad-labs/xcl-plugin-docker", "latest")  # fatal when the Config is created
-github.register_plugin("jumppad-labs/xcl-plugin-docker", "~0.3")    # fatal
-github.register_plugin("jumppad-labs/xcl-plugin-docker", "0.3.0")   # fatal, the tag has a v
-github.register_plugin("xcl-plugin-docker", "v0.3.0")               # fatal, not owner/repo
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "~0.4")    # fatal
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "0.4.1")   # fatal, the tag has a v
+github.register_plugin("xcl-plugin-docker", "v0.4.1")               # fatal, not owner/repo
 ```
 
 In Python, `register_plugin` only records the declaration. The same rule is
@@ -110,19 +110,44 @@ Draft releases are never installed.
 ## What a release must contain
 
 The registry installs exactly the layout the plugin template publishes, and
-nothing else. For a repository called `xcl-plugin-docker` at `v0.3.0`:
+nothing else. For a repository called `xcl-plugin-docker` at `v0.4.1`:
 
-- one archive per platform, `xcl-plugin-docker_0.3.0_<os>_<arch>.tar.gz`,
-  or `.zip` for `windows`, for linux, darwin and windows on amd64 and arm64.
-  A release may leave a platform out; installing on that platform then fails
-  saying there is no build for it.
-- the plugin binary at the root of each archive, `xcl-plugin-docker`, or
-  `xcl-plugin-docker.exe` on windows.
-- `xcl-plugin-docker_0.3.0_checksums.txt`, the SHA-256 of every archive in
-  the format `sha256sum` writes. It is required: a release without it, or an
-  archive that is not listed or does not match, is refused.
-- optionally `xcl-plugin-docker_0.3.0_checksums.txt.sig`, an ASCII-armoured
-  detached OpenPGP signature over the checksums file.
+- `xcl-plugin-docker-0.4.1-index.xcl`, the release's index. It is required:
+  a release without one isn't a plugin release, and is refused. It names the
+  plugin and its version, and lists each platform the plugin is built for,
+  among linux, darwin and windows on amd64 and arm64, with the name of that
+  platform's zip and the zip's SHA-256:
+
+  ```hcl
+  plugin {
+    name    = "xcl-plugin-docker"
+    version = "0.4.1"
+  }
+
+  executable {
+    protocol = [1]
+
+    platform "linux" "arm64" {
+      asset    = "xcl-plugin-docker-0.4.1-linux-arm64.zip"
+      checksum = "sha256:75e9015748ebadd95ce2936b60276d77c89c5b131c7dbcce67d3ceef66920ce9"
+    }
+  }
+  ```
+
+  A release may leave a platform out; installing on that platform then fails,
+  naming the platforms the release offers. The index holds literal values
+  only, and every platform must have a checksum.
+- one zip per platform, `xcl-plugin-docker-0.4.1-<os>-<arch>.zip`, holding
+  the plugin binary and, at its root, an `xcl-plugin.xcl` manifest naming the
+  plugin, its version, the command that starts it and the one platform it was
+  built for. The manifest must agree with the index.
+- optionally `xcl-plugin-docker-0.4.1-index.xcl.sig`, an ASCII-armoured
+  detached OpenPGP signature over the index.
+
+`0.4.1` is the tag without its `v`. The parts of each name may be separated
+by `-`, as here and in the plugin template, or by `_` throughout
+(`xcl-plugin-docker_0.4.1_index.xcl`); the registry finds the index under
+either name, and takes every zip's name from the index.
 
 The plugin template's `make dist` and release workflow produce all of this
 from a pushed version tag. Any other tool producing the same names and
@@ -131,7 +156,7 @@ formats works too.
 ## Trusting signing keys
 
 Give the registry the public keys you trust, and a plugin is used only when
-its release's checksums file is signed by one of them:
+its release's index is signed by one of them:
 
 <CodeTabs>
   <div slot="go">
@@ -162,7 +187,7 @@ github.register_plugin("acme/xcl-plugin-billing", "v2.0.1")
 </CodeTabs>
 
 A release signed by another key, or not signed at all, is refused and nothing
-is kept. Signing the checksums file signs every archive through its checksum.
+is kept. The index holds every zip's checksum, so signing it signs every zip.
 Without trusted keys signatures are not checked, and unsigned releases
 install. A key that cannot be read fails the load, naming the `github.com`
 registry.
@@ -205,12 +230,19 @@ Installed plugins are kept under the xcl home directory, in
 `~/.xcl/cache/plugins`, one entry per repository, version and platform:
 
 ```text
-~/.xcl/cache/plugins/github.com/jumppad-labs/xcl-plugin-docker/v0.3.0/linux_arm64/
-  xcl-plugin-docker_0.3.0_linux_arm64.tar.gz
-  xcl-plugin-docker_0.3.0_checksums.txt
-  xcl-plugin-docker_0.3.0_checksums.txt.sig
+~/.xcl/cache/plugins/github.com/jumppad-labs/xcl-plugin-docker/v0.4.1/linux_arm64/
+  xcl-plugin-docker-0.4.1-index.xcl
+  xcl-plugin-docker-0.4.1-index.xcl.sig
+  xcl-plugin-docker-0.4.1-linux-arm64.zip
   xcl-plugin-docker
+  xcl-plugin.xcl
+  README.md
+  LICENSE
 ```
+
+The entry holds the index, its signature when the release has one, this
+platform's zip and the files extracted from it. Only this platform's zip is
+downloaded.
 
 Choose another location with `registry.GitHubCacheDir`, for example a
 directory inside your project or a CI cache:
@@ -235,9 +267,10 @@ github = xcl.GitHubRegistry(cache_dir="./.xcl/plugins")
 - **Offline.** A version already in the cache is used without contacting
   GitHub, so applies work with no network access.
 - **Checked on every start.** Every time a cached plugin is started it is
-  verified again: the archive against the kept checksums file, the binary
-  against the archive's copy, and the signature against the application's
-  current trusted keys when it gives any. A changed file is refused before the
+  verified again: the signature over the index against the application's
+  current trusted keys when it gives any, the zip against its checksum in the
+  index, the zip's manifest against the index, and the binary against its
+  copy in the zip. A changed file is refused before the
   plugin runs.
 - **Written in one step.** A plugin is downloaded and verified in a temporary
   directory and moved into place only once it passes, so a failed or
@@ -251,10 +284,14 @@ A plugin that cannot be installed fails the first operation with a
 wraps a `*xcl.PluginInstallError`, which names the `Repository`, `Version` and
 `Platform`, and matches one of two errors:
 
-- `xcl.ErrPluginNotFound`: the release, or its build for this platform, does
-  not exist, or the repository is private and no token was given.
-- `xcl.ErrPluginVerification`: the release has no checksums file, a file does
-  not match its checksum, or a signature is missing or not from a trusted key.
+- `xcl.ErrPluginNotFound`: the release does not exist, has no index, or
+  offers no build for this platform, or the repository is private and no
+  token was given. A missing build names the platforms the release offers.
+- `xcl.ErrPluginVerification`: the index is incomplete or names another
+  plugin or version, the zip does not match its checksum in the index, the
+  zip's manifest disagrees with the index, a cached file was changed, or,
+  with trusted keys, the index is unsigned or its signature is not from a
+  trusted key.
 
 <CodeTabs>
   <div slot="go">
