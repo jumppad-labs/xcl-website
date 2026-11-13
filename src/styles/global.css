@@ -235,3 +235,126 @@
   border-top-right-radius: 0;
 }
 
+
+/* The generated API reference. Anchors clear the sticky navigation. */
+.reference-index {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--spacing-md, 1rem);
+  margin-bottom: 3rem;
+}
+
+.reference-index h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.reference-index ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.875rem;
+}
+
+.reference-index a,
+.reference-name a {
+  color: var(--color-link-blue);
+  text-decoration: none;
+}
+
+.reference-index a:hover,
+.reference-name a:hover {
+  text-decoration: underline;
+}
+
+.reference-section {
+  scroll-margin-top: 80px;
+  margin-bottom: 3rem;
+}
+
+.reference-section > h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 1.5rem;
+}
+
+.reference-entry {
+  scroll-margin-top: 80px;
+}
+
+.reference-entry-top {
+  border-top: 1px solid var(--color-border-subtle);
+  padding-block: 1.5rem;
+}
+
+.reference-entry-member {
+  padding-block: 0.75rem;
+}
+
+.reference-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono", "Roboto Mono", monospace;
+  font-weight: 700;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.reference-kind {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.reference-signature {
+  background-color: var(--color-bg-code);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  margin-block: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reference-description,
+.reference-fields {
+  color: var(--color-text-secondary);
+  font-size: 0.9375rem;
+  margin-block: 0.5rem;
+}
+
+.reference-description pre {
+  background-color: var(--color-bg-code);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  margin-block: 0.5rem;
+  overflow-x: auto;
+  padding: 0.5rem 0.75rem;
+}
+
+.reference-fields dt {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  margin-top: 0.5rem;
+}
+
+.reference-fields ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.reference-fields li + li {
+  margin-top: 0.25rem;
+}
+
+.reference-type {
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.reference-members {
+  border-left: 2px solid var(--color-border-subtle);
+  margin-top: 0.75rem;
+  padding-left: 1rem;
+}

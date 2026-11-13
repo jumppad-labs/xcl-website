@@ -13,6 +13,7 @@ preview: build
 	npm run preview
 
 check:
+	npm run reference
 	npx astro check
 
 clean:

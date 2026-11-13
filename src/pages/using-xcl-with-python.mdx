@@ -1,0 +1,389 @@
+---
+layout: ../layouts/Shell.astro
+title: "Using XCL with Python - xcl"
+description: "From an empty program to a working one in Python: install xcl-lang from PyPI, register entity types and functions, use a Go plugin, apply, keep state, find entities, handle errors, log and destroy."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+import PyRef from "../components/PyRef.astro";
+import { pypiURL } from "../config/site";
+
+<Hero
+  heading="Using XCL with Python"
+  sub="From an empty program to a working one: a Python program that reads XCL, applies it through a Go plugin, keeps state and tears it all down."
+/>
+
+<Prose>
+
+XCL is a configuration language of its own. A file describes entities and how
+they relate, and a program decides what those entities do. This guide builds
+one Python program a section at a time, using the synchronous API first and
+the asyncio API at the end. The [complete program](#the-complete-program) is
+near the bottom of the page. Every name links to its entry in the
+[Python reference](/reference/python/).
+
+## Install
+
+Create a virtual environment and install
+<a href={pypiURL}>xcl-lang from PyPI</a>. The package is imported as `xcl`,
+and it bundles the engine, so you need no Go or C compiler.
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install xcl-lang
+```
+
+The plugin used below needs a running Docker engine. Everything else in the
+guide does not.
+
+## Write some configuration
+
+Put this in `infra/main.xcl`. It has one entity of a type the program will
+define, `settings`, which calls a function the program will provide, and two
+entities from the Docker plugin. The container refers to the settings and to
+the network, so XCL creates them first.
+
+```hcl title="infra/main.xcl"
+settings "web" {
+  image    = "nginx:1.27-alpine"
+  replicas = 2
+  greeting = shout("hello")
+}
+
+docker "network" "main" {
+  subnet = "10.73.0.0/24"
+}
+
+docker "container" "web" {
+  image = settings.web.image
+
+  network {
+    name = docker.network.main.meta.name
+  }
+}
+```
+
+## Register a type and a function
+
+An entity type is a dataclass, registered on an
+<PyRef name="xcl.LocalRegistry" /> with
+<PyRef name="xcl.LocalRegistry.register_type" />. The optional
+<PyRef name="xcl.Meta" /> field receives the entity's metadata. A function is
+registered with <PyRef name="xcl.LocalRegistry.register_function" />, and its
+annotations give its signature. The [registries guide](/registries/) covers
+both in detail.
+
+```python title="main.py"
+@dataclass
+class Settings:
+    image: str
+    replicas: int = 1
+    greeting: str = ""
+    meta: xcl.Meta | None = None
+
+
+def shout(text: str) -> str:
+    return text.upper()
+```
+
+## Use a Go plugin
+
+Plugins are written in Go and run as separate programs, and a Python program
+uses the same ones a Go program does. An <PyRef name="xcl.GitHubRegistry" />
+installs a plugin from its signed GitHub release on first use, and
+<PyRef name="xcl.GitHubRegistry.register_plugin" /> names the repository and
+the release. Download the key that signs the Docker plugin's releases next to
+your program:
+
+```sh
+curl -O https://xcl.dev/keys/jumppad-labs-releases.asc
+```
+
+Then build the registries in one place, since each run of the program needs
+them:
+
+```python title="main.py"
+def registries() -> list:
+    local = xcl.LocalRegistry()
+    local.register_type(Settings, "settings")
+    local.register_function(shout)
+
+    release_key = Path("jumppad-labs-releases.asc").read_text()
+    github = xcl.GitHubRegistry(trusted_keys=[release_key])
+    github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.4.1")
+
+    return [local, github]
+```
+
+[Installing plugins from GitHub](/github-registry/) explains pinning, private
+repositories and the cache. Writing a plugin in Python is not yet supported;
+the [plugin template](/plugin-template/) starts a new one in Go.
+
+## Apply and keep state
+
+An <PyRef name="xcl.Config" /> holds the registries and the directory that
+state is saved in. <PyRef name="xcl.Config.apply" /> reads the configuration
+at the paths you give it and creates, updates and destroys entities to match,
+saving state as it goes. <PyRef name="xcl.Config.entity_count" /> says how many
+entities the configuration now holds.
+
+```python title="main.py"
+def apply() -> None:
+    with xcl.Config(
+        registries=registries(),
+        state_path=".xcl",
+        on_event=xcl.logging_handler(),
+    ) as cfg:
+        try:
+            cfg.apply("./infra")
+        except xcl.ConfigError as err:
+            xcl.print_error(err, formatter=xcl.highlight.for_stream(sys.stderr))
+            sys.exit(1)
+
+        print(f"applied {cfg.entity_count()} entities")
+```
+
+State is what lets a later run of the program know what exists. Applying again
+changes only what the configuration has changed. To encrypt sensitive values
+in it, see [state masking](/state-masking/).
+
+## Find entities
+
+A second run reads the saved state with <PyRef name="xcl.Config.load" /> and
+needs no configuration files. <PyRef name="xcl.Config.find" /> takes an
+address and returns an instance of your class when you give one. With `None`
+it returns the class registered for that type, or an
+<PyRef name="xcl.Entity" /> for a plugin's type, which reads like an object
+or a mapping. <PyRef name="xcl.Config.find_by_type" /> returns every entity
+of a type.
+
+```python title="main.py"
+def show() -> None:
+    with xcl.Config(registries=registries(), state_path=".xcl") as cfg:
+        cfg.load()
+
+        settings = cfg.find(Settings, "settings.web")
+        print(settings.image, settings.replicas, settings.greeting)
+
+        network = cfg.find(None, "docker.network.main")
+        print(network.meta.id, network.subnet, network.docker_id)
+
+        for container in cfg.find_by_type(None, "docker", "container"):
+            print(container.meta.id, container.ip_address)
+
+        cfg.print_entity(network, include_computed=True)
+```
+
+## Print an entity
+
+The last line of `show` uses <PyRef name="xcl.Config.print_entity" /> to write
+an entity back out as configuration text. With
+<PyRef name="xcl.Config.print_entity" label="include_computed=True" /> it
+includes the values the plugin filled in:
+
+```hcl
+docker "network" "main" {
+  subnet    = "10.73.0.0/24"
+  docker_id = "131f23673a5011abcaa32775c6f6d2e110cee1c301a41e6e9f5304c1d7947de3" # set by the provider
+}
+```
+
+## Handle a configuration error
+
+The `try` in `apply` catches <PyRef name="xcl.ConfigError" />, raised for
+configuration that is not valid. <PyRef name="xcl.print_error" /> prints it for
+a person to read, and <PyRef name="xcl.highlight.for_stream" /> chooses colour
+when the stream is a terminal. Change `replicas` to `"two"` and apply, and you
+see where the mistake is:
+
+```text
+Error: Unsuitable value type
+
+  on infra/main.xcl line 3, in settings.web, field replicas:
+     1 | settings "web" {
+     2 |   image    = "nginx:1.27-alpine"
+     3 |   replicas = "two"
+     4 |   greeting = shout("hello")
+     5 | }
+
+Attribute "replicas": Unsuitable value: a number is required
+```
+
+Put the value back before you continue.
+
+## Turn on logging
+
+XCL prints nothing of its own. Everything it and its plugins report is a
+stream of events, delivered to the <PyRef name="xcl.Config.__init__" label="on_event" />
+handler you give it, and
+<PyRef name="xcl.logging_handler" /> sends them to the standard `logging`
+module. The program's own `apply` function passes that handler, so it only
+needs logging configured, which its last lines do.
+
+For readable lines, with each entity's configuration written beneath it as it
+is created, use <PyRef name="xcl.prettylog.handler" /> instead, and create the
+configuration with <PyRef name="xcl.EventDataLevel.PROCESSED" label="xcl.EventDataLevel.PROCESSED" /> so the
+events carry entity data:
+
+```python
+import xcl.prettylog
+
+xcl.Config(
+    registries=registries(),
+    state_path=".xcl",
+    event_data=xcl.EventDataLevel.PROCESSED,
+    on_event=xcl.prettylog.handler(),
+)
+```
+
+The [events guide](/events/) describes the stream in full.
+
+## Destroy
+
+<PyRef name="xcl.Config.destroy" /> destroys every entity in the saved state,
+children first, so the container goes before the network it joined.
+
+```python title="main.py"
+def destroy() -> None:
+    with xcl.Config(registries=registries(), state_path=".xcl") as cfg:
+        cfg.destroy()
+        print("destroyed")
+```
+
+## The complete program
+
+```python title="main.py"
+import logging
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+import xcl
+
+
+@dataclass
+class Settings:
+    image: str
+    replicas: int = 1
+    greeting: str = ""
+    meta: xcl.Meta | None = None
+
+
+def shout(text: str) -> str:
+    return text.upper()
+
+
+def registries() -> list:
+    local = xcl.LocalRegistry()
+    local.register_type(Settings, "settings")
+    local.register_function(shout)
+
+    release_key = Path("jumppad-labs-releases.asc").read_text()
+    github = xcl.GitHubRegistry(trusted_keys=[release_key])
+    github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.4.1")
+
+    return [local, github]
+
+
+def apply() -> None:
+    with xcl.Config(
+        registries=registries(),
+        state_path=".xcl",
+        on_event=xcl.logging_handler(),
+    ) as cfg:
+        try:
+            cfg.apply("./infra")
+        except xcl.ConfigError as err:
+            xcl.print_error(err, formatter=xcl.highlight.for_stream(sys.stderr))
+            sys.exit(1)
+
+        print(f"applied {cfg.entity_count()} entities")
+
+
+def show() -> None:
+    with xcl.Config(registries=registries(), state_path=".xcl") as cfg:
+        cfg.load()
+
+        settings = cfg.find(Settings, "settings.web")
+        print(settings.image, settings.replicas, settings.greeting)
+
+        network = cfg.find(None, "docker.network.main")
+        print(network.meta.id, network.subnet, network.docker_id)
+
+        for container in cfg.find_by_type(None, "docker", "container"):
+            print(container.meta.id, container.ip_address)
+
+        cfg.print_entity(network, include_computed=True)
+
+
+def destroy() -> None:
+    with xcl.Config(registries=registries(), state_path=".xcl") as cfg:
+        cfg.destroy()
+        print("destroyed")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    {"apply": apply, "show": show, "destroy": destroy}[sys.argv[1]]()
+```
+
+Run each step in turn:
+
+```sh
+python main.py apply
+python main.py show
+python main.py destroy
+```
+
+## Using asyncio
+
+Use <PyRef name="xcl.aio.Config" /> when your program already runs an event
+loop, such as a web service built on FastAPI or aiohttp, so an apply never
+blocks the requests it is serving. It takes the same options as
+<PyRef name="xcl.Config" />, and its operations and lookups are awaited.
+A plain script gains nothing from it, so stay with the synchronous API unless
+you have an event loop to share.
+
+Import <PyRef name="xcl.aio" /> on its own, since `import xcl` does not load it.
+Beside `main.py`, this program applies the same configuration:
+
+```python title="main_async.py"
+import asyncio
+
+import xcl.aio
+
+from main import registries
+
+
+async def main() -> None:
+    async with xcl.aio.Config(registries=registries(), state_path=".xcl") as cfg:
+        await cfg.apply("./infra")
+        print(f"applied {await cfg.entity_count()} entities")
+        await cfg.destroy()
+
+
+asyncio.run(main())
+```
+
+```sh
+python main_async.py
+```
+
+Its <PyRef name="xcl.aio.Config.apply" label="apply" /> and
+<PyRef name="xcl.aio.Config.destroy" label="destroy" /> behave as the synchronous
+ones do. The <PyRef name="xcl.aio.Config.__init__" label="on_event" /> handler, the
+<PyRef name="xcl.aio.Config.__init__" label="state_store" /> methods and
+registered functions may also be `async def`.
+
+</Prose>
+
+<CtaBanner
+  heading="Look up the rest"
+  body="Every name the package exports, with its signature, parameters, return value and errors."
+>
+  <Button href="/reference/python/" label="Python reference →" variant="primary" large />
+  <Button href="/registries/" label="Registries guide →" variant="secondary" large />
+</CtaBanner>

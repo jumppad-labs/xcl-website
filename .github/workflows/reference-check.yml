@@ -1,0 +1,34 @@
+# Builds the site with a guide link to a name missing from the Python reference
+# as a failure. A deployment or a pin bump only warns, so a renamed name cannot
+# stop a release reaching the site; this check is where it is reported.
+
+name: Reference check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build with unknown reference names as failures
+        env:
+          ASTRO_TELEMETRY_DISABLED: '1'
+          XCL_REFERENCE_STRICT: '1'
+        run: npm run build
