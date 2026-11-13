@@ -1,0 +1,40 @@
+---
+import Shell from "../../layouts/Shell.astro";
+import Hero from "../../components/sections/Hero.astro";
+import Badge from "../../components/Badge.astro";
+import Entry from "../../components/reference/Entry.astro";
+import { reference } from "../../lib/pythonReference";
+
+const description = `The API of the ${reference.package} package, version ${reference.version}: every public name, its signature and its members.`;
+---
+<Shell title="Python reference - xcl" description={description}>
+  <Hero heading="Python reference" sub={`Every public name of the <code>${reference.package}</code> package, imported as <code>xcl</code>.`}>
+    <div class="mt-4">
+      <Badge text={`version ${reference.version}`} />
+    </div>
+  </Hero>
+
+  <section class="py-xl max-sm:py-lg">
+    <div class="mx-auto max-w-[1100px] px-md">
+      <nav aria-label="Reference index" class="reference-index">
+        {reference.sections.map((section) => (
+          <div>
+            <h2><a href={`#section-${section.id}`}>{section.title}</a></h2>
+            <ul>
+              {section.entries.map((entry) => (
+                <li><a href={`#${entry.id}`}>{entry.name}</a></li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+
+      {reference.sections.map((section) => (
+        <section id={`section-${section.id}`} class="reference-section">
+          <h2>{section.title}</h2>
+          {section.entries.map((entry) => <Entry entry={entry} />)}
+        </section>
+      ))}
+    </div>
+  </section>
+</Shell>

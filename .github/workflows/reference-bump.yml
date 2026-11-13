@@ -1,0 +1,100 @@
+# Moves the Python reference to a new xcl-python release. xcl-python's release
+# workflow dispatches it (event xcl-python-release) with the tag once the
+# GitHub release carries the reference data; it can also be run by hand.
+#
+# It writes the tag to xcl-python-ref.txt, builds the site, which downloads
+# that release's data, and pushes to main only if the build passes. A failing
+# build leaves the pin and the site where they are. The push uses a token of
+# the xcl release bot GitHub App, since a push made with the built-in
+# GITHUB_TOKEN starts no workflows: the App's push is what starts deploy.yml.
+#
+# A dispatch for the tag already pinned, or an older one, does nothing.
+
+name: Reference bump
+
+on:
+  repository_dispatch:
+    types: [xcl-python-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The xcl-python tag to pin, e.g. v0.15.0
+        required: true
+        type: string
+
+concurrency:
+  group: reference-bump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    name: Reference bump
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.client_payload.tag || inputs.tag }}
+    steps:
+      - name: Check the tag
+        run: |
+          if ! grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<< "$TAG"; then
+            echo "the tag must look like v0.15.0, got '$TAG'"
+            exit 1
+          fi
+
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ steps.app.outputs.token }}
+
+      - name: Write the pin
+        id: pin
+        run: |
+          current="$(tr -d '[:space:]' < xcl-python-ref.txt)"
+          newest="$(printf '%s\n%s\n' "$current" "$TAG" | sort -V | tail -n 1)"
+          if [ "$newest" = "$current" ]; then
+            echo "main pins $current, which is $TAG or newer; nothing to do"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$TAG" > xcl-python-ref.txt
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        if: steps.pin.outputs.changed == 'true'
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        if: steps.pin.outputs.changed == 'true'
+        run: npm ci
+
+      - name: Build the site at the new pin
+        if: steps.pin.outputs.changed == 'true'
+        env:
+          ASTRO_TELEMETRY_DISABLED: '1'
+        run: npm run build
+
+      - name: Push the pin
+        if: steps.pin.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          # commit as the App's bot user
+          user_id="$(gh api "users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git add xcl-python-ref.txt
+          git commit -m "Use xcl-python $TAG for the reference"
+          git push origin main
