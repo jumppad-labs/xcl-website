@@ -8,6 +8,7 @@ import Prose from "../../components/sections/Prose.astro";
 import CtaBanner from "../../components/sections/CtaBanner.astro";
 import Button from "../../components/Button.astro";
 import CodeTabs from "../../components/CodeTabs.astro";
+import TsExample from "../../components/TsExample.astro";
 import { pythonParityURL } from "../../config/site";
 
 <Hero
@@ -1088,6 +1089,13 @@ per command:
 `xcl.print_error` prints an error as `xcl.PrintError` does, to `sys.stderr` unless you pass a stream. An xcl error a program does not catch still shows its report: every xcl error holding a configuration problem carries the report as an exception note, which Python prints after the traceback.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="dispatch" />
+
+`printError` prints an error as `xcl.PrintError` does, to `process.stderr` unless `out` names another writer. An xcl error a program does not catch still shows its report: every xcl error holding a configuration problem carries the report in its `stack`, which Node prints when the error is uncaught.
+
+  </div>
 </CodeTabs>
 
 A command that fails returns its error, and `run` prints it to standard error
@@ -1164,6 +1172,11 @@ def new_config(handler, docker_plugin: str, state_dir: str) -> xcl.Config:
 Registering an in-process plugin is not yet available from Python: Python loads plugins as external binaries, so the template plugin would be built into a binary of its own and registered with `register_external_plugin` as well; see the <a href={pythonParityURL}>parity list</a>.
 
   </div>
+  <div slot="typescript">
+
+A TypeScript program has no in-process plugins: it runs every plugin as a program of its own, registered with `registerExternalPlugin` or `registerPluginDirectory` on a `LocalRegistry`, or installed from a `GitHubRegistry`. The template plugin would be built into a binary of its own and registered with `registerExternalPlugin` beside the Docker plugin.
+
+  </div>
 </CodeTabs>
 
 `handler` is the receiver for xcl's [events](/events/). Each command that
@@ -1194,6 +1207,11 @@ def event_handler(out):
 
     return handle
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="event-handler" />
 
   </div>
 </CodeTabs>
@@ -1244,6 +1262,11 @@ def apply_command(stderr, config_dir: str, docker_plugin: str, state_dir: str) -
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="apply-command" />
+
+  </div>
 </CodeTabs>
 
 `plan` changes nothing either. It prints what applying a configuration would
@@ -1282,6 +1305,11 @@ def plan_command(stdout, config_dir: str, docker_plugin: str, state_dir: str) ->
     with new_config(None, docker_plugin, state_dir) as cfg:
         plan(stdout, cfg, config_dir)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="plan-command" />
 
   </div>
 </CodeTabs>
@@ -1324,6 +1352,13 @@ def plan(out, cfg: xcl.Config, config_dir: str) -> None:
 `xcl.highlight.for_stream` picks `xcl.highlight.TERMINAL` when the stream is a terminal and `NO_COLOR` is unset or empty, and `xcl.highlight.PLAIN` otherwise.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="plan" />
+
+`forStream` picks `terminal` when the stream is a terminal and `NO_COLOR` is unset or empty, and `plain` otherwise.
+
+  </div>
 </CodeTabs>
 
 `status` applies nothing. `Load` reads the saved state into the `Config`
@@ -1362,6 +1397,11 @@ def status_command(stdout, docker_plugin: str, state_dir: str) -> None:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="status-command" />
+
+  </div>
 </CodeTabs>
 
 `status` draws the tree with [Lip Gloss](https://github.com/charmbracelet/lipgloss).
@@ -1395,6 +1435,11 @@ being the only part of it the program imports:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="status-networks" />
+
+  </div>
 </CodeTabs>
 
 A type with no subtype is looked up by its type alone:
@@ -1417,6 +1462,11 @@ A type with no subtype is looked up by its type alone:
     # template has no subtype, so its address has one segment before the name
     templates = cfg.find_by_type(None, "template")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="status-templates" />
 
   </div>
 </CodeTabs>
@@ -1491,6 +1541,13 @@ def inspect(out, cfg: xcl.Config, address: str) -> None:
 As in `plan`, `xcl.highlight.for_stream` makes the colour decision for `out` itself. The file is not named `inspect.py`: a module of that name beside `main.py` shadows the standard library's `inspect`, which `dataclasses` imports, and `import xcl` fails.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="inspect" />
+
+As in `plan`, `forStream` makes the colour decision for `out` itself.
+
+  </div>
 </CodeTabs>
 
 `destroy` needs no configuration either. `Destroy` works from the saved
@@ -1527,6 +1584,11 @@ def destroy_command(stderr, docker_plugin: str, state_dir: str) -> None:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="destroy-command" />
+
+  </div>
 </CodeTabs>
 
 A registered plugin that fails to load, such as a binary that was never
@@ -1556,6 +1618,11 @@ def explain_plugin_load(err: xcl.Error) -> str:
 
     return str(err)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="examples/plugins/main.ts" region="explain-plugin-load" />
 
   </div>
 </CodeTabs>

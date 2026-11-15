@@ -12,6 +12,7 @@ import Button from "../components/Button.astro";
 import InstallBlock from "../components/InstallBlock.astro";
 import FeatureCard from "../components/FeatureCard.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 import { pypiURL } from "../config/site";
 
 <Hero
@@ -48,6 +49,21 @@ pip install xcl-lang
   results are the same everywhere, and no Go or C compiler is needed. Wheels
   are published for Linux on glibc and on musl (Alpine), macOS and Windows,
   each on x86-64 and arm64. See <a href={pypiURL}>xcl-lang on PyPI</a>.
+
+  </div>
+  <div slot="typescript">
+
+```sh
+npm install xcl-lang
+```
+
+  The package is imported from `xcl-lang`. It runs the XCL engine as a small
+  program in a subprocess, on every platform, so the API and the results are
+  the same everywhere, and no Go or C compiler is needed. The engine comes
+  from a platform package installed alongside it, published for Linux on
+  glibc and on musl (Alpine), macOS and Windows, each on x86-64 and arm64.
+  It needs Node 22.12 or later. See
+  [xcl-lang on npm](https://www.npmjs.com/package/xcl-lang).
 
   </div>
 </CodeTabs>
@@ -126,6 +142,11 @@ class PostgreSQL:
     # Set by a provider, never by configuration
     connection_string: xcl.Computed[str] = None
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="index/resources.ts" region="show" title="resources.ts" />
 
   </div>
 </CodeTabs>
@@ -215,6 +236,14 @@ db = cfg.find(PostgreSQL, "database.postgres.main")
 
 print(db.location, db.port)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="index/read-back.ts" region="show" title="main.ts" />
+
+  In TypeScript a plugin's entities come back as a generic `Entity`, read
+  through `attributes`, rather than as a class of the program's own.
 
   </div>
 </CodeTabs>
