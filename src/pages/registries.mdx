@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 import { pythonParityURL } from "../config/site";
 
 <Hero
@@ -64,6 +65,11 @@ local.register_plugin_directory("~/.xcl/plugins")          # a directory to sear
 with xcl.Config(registries=[local], state_path="./.xcl") as cfg:
     ...
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="registries/local.ts" region="show" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -145,6 +151,11 @@ with xcl.Config(registries=[local]) as cfg:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="registries/declaring-types.ts" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 A plain struct needs no xcl type of its own. A field called `Meta`, which must
@@ -209,6 +220,11 @@ local.register_plugin_directory("/opt/acme/plugins")
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="registries/plugin-pattern.ts" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 The pattern is fixed when the registry is created, so a later registration
@@ -269,6 +285,11 @@ with xcl.Config(registries=[local]) as cfg:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="registries/configuration-only.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 The [configuration only example](/examples/configuration-only/) is a complete
@@ -315,6 +336,11 @@ user.register_plugin_directory("~/.xcl/plugins")
 with xcl.Config(registries=[builtin, user]) as cfg:  # builtin is read and loaded first, then user
     ...
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="registries/load-order.ts" region="show" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -385,6 +411,13 @@ except xcl.TypeNameClashError as e:
 ```
 
   </div>
+  <div slot="typescript">
+
+In TypeScript the configuration is created in the engine on its first call, so that call, or `setup()`, rejects with `TypeNameClashError`:
+
+<TsExample file="registries/type-clash.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 **A problem with plugins is an error from the first operation.** A plugin
@@ -417,6 +450,11 @@ try:
 except xcl.PluginLoadError as e:
     print(e)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="registries/plugin-load-error.ts" region="show" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -518,6 +556,11 @@ type Plugin interface {
 Writing your own registry is not yet available from Python. Python programs use `xcl.LocalRegistry` and `xcl.GitHubRegistry`; see the <a href={pythonParityURL}>parity list</a> for what the package offers.
 
   </div>
+  <div slot="typescript">
+
+Writing your own registry is not available from TypeScript. TypeScript programs use the package's built-in registries, `LocalRegistry` and `GitHubRegistry`.
+
+  </div>
 </CodeTabs>
 
 `Types` is read once, by `NewConfig`, and a registry with no Go types returns
@@ -564,6 +607,11 @@ func (t *Toolkit) Plugins(ctx context.Context, emit events.Emit) ([]registry.Plu
   <div slot="python">
 
 Writing your own registry is not yet available from Python. Python programs use `xcl.LocalRegistry` and `xcl.GitHubRegistry`; see the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+  <div slot="typescript">
+
+Writing your own registry is not available from TypeScript. TypeScript programs use the package's built-in registries, `LocalRegistry` and `GitHubRegistry`.
 
   </div>
 </CodeTabs>
