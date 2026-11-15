@@ -28,23 +28,27 @@ Outputs the static site to `dist/`. The deploy workflow at
 `.github/workflows/deploy.yml` runs the same command in CI and publishes
 `dist/` to GitHub Pages on every push to `main`.
 
-## The Python reference
+## The language references
 
-`/reference/python/` is built from data the xcl-python release publishes.
-`xcl-python-ref.txt` pins the release, and `npm run reference`, which runs
-before every build and dev server, downloads that release's
+`/reference/python/` and `/reference/typescript/` are built from data each
+package's release publishes. `xcl-python-ref.txt` and `xcl-typescript-ref.txt`
+pin the releases, and `npm run reference` (`scripts/fetch-reference.mjs`),
+which runs before every build and dev server, downloads each release's
 `xcl-lang-<version>-reference.json` into `src/generated/`, which git ignores.
-A build fails if the data is missing or describes a different version from the
-pin. A new xcl-python release moves the pin through
+A build fails if either file is missing or describes a different version from
+its pin. A new release of either package moves its pin through
 `.github/workflows/reference-bump.yml`.
 
-To work without the download, generate the data from an xcl-python checkout
-and point the build at it:
+To work without a download, generate the data from a package checkout and
+point the build at it:
 
 ```
-python .github/scripts/api_reference.py --out /tmp/reference.json   # in xcl-python
-XCL_PYTHON_REFERENCE=/tmp/reference.json npm run build              # here
+python .github/scripts/api_reference.py --out /tmp/python.json        # in xcl-python
+node .github/scripts/api-reference.mjs --out /tmp/typescript.json     # in xcl-typescript
+XCL_PYTHON_REFERENCE=/tmp/python.json XCL_TYPESCRIPT_REFERENCE=/tmp/typescript.json npm run build   # here
 ```
+
+Either variable can be set alone; the other language is still downloaded.
 
 ## Pages
 
