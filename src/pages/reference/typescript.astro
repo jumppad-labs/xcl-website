@@ -1,0 +1,9 @@
+---
+import ReferencePage from "../../components/reference/ReferencePage.astro";
+import { reference } from "../../lib/typescriptReference";
+---
+<ReferencePage
+  reference={reference}
+  heading="TypeScript reference"
+  sub={`Every public name of the <code>${reference.package}</code> package, imported from <code>"${reference.package}"</code>.`}
+/>

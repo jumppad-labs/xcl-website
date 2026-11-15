@@ -1,0 +1,58 @@
+---
+// The parameters, return value and errors of an entry or one of its overloads.
+import type { ReferenceParameter, ReferenceRaises, ReferenceReturns } from "../../lib/reference";
+
+interface Props {
+  parameters?: ReferenceParameter[];
+  returns?: ReferenceReturns;
+  raises?: ReferenceRaises[];
+}
+
+const { parameters, returns, raises } = Astro.props;
+const hasFields = parameters?.length || returns || raises?.length;
+---
+{hasFields && (
+  <dl class="reference-fields">
+    {parameters?.length ? (
+      <>
+        <dt>Parameters</dt>
+        <dd>
+          <ul>
+            {parameters.map((parameter) => (
+              <li>
+                <code>{parameter.name}</code>
+                {parameter.type && <span class="reference-type"> {parameter.type}</span>}
+                {parameter.default && <span class="reference-type"> = {parameter.default}</span>}
+                {parameter.description && <div class="xcl-body" set:html={parameter.description} />}
+              </li>
+            ))}
+          </ul>
+        </dd>
+      </>
+    ) : null}
+    {returns && (
+      <>
+        <dt>Returns</dt>
+        <dd>
+          {returns.type && <code>{returns.type}</code>}
+          {returns.description && <div class="xcl-body" set:html={returns.description} />}
+        </dd>
+      </>
+    )}
+    {raises?.length ? (
+      <>
+        <dt>Raises</dt>
+        <dd>
+          <ul>
+            {raises.map((raised) => (
+              <li>
+                <code>{raised.type}</code>
+                {raised.description && <div class="xcl-body" set:html={raised.description} />}
+              </li>
+            ))}
+          </ul>
+        </dd>
+      </>
+    ) : null}
+  </dl>
+)}

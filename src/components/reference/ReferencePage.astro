@@ -1,0 +1,52 @@
+---
+// A language package's reference page: the version, an index of every
+// section's names, and one anchored entry per name. One template serves
+// every language's data.
+import Shell from "../../layouts/Shell.astro";
+import Hero from "../sections/Hero.astro";
+import Badge from "../Badge.astro";
+import Entry from "./Entry.astro";
+import type { Reference } from "../../lib/reference";
+
+interface Props {
+  reference: Reference;
+  /** The page's heading, such as "Python reference". */
+  heading: string;
+  /** The line beneath the heading, as HTML. */
+  sub: string;
+}
+
+const { reference, heading, sub } = Astro.props;
+const description = `The API of the ${reference.package} package, version ${reference.version}: every public name, its signature and its members.`;
+---
+<Shell title={`${heading} - xcl`} description={description}>
+  <Hero heading={heading} sub={sub}>
+    <div class="mt-4">
+      <Badge text={`version ${reference.version}`} />
+    </div>
+  </Hero>
+
+  <section class="py-xl max-sm:py-lg">
+    <div class="mx-auto max-w-[1100px] px-md">
+      <nav aria-label="Reference index" class="reference-index">
+        {reference.sections.map((section) => (
+          <div>
+            <h2><a href={`#section-${section.id}`}>{section.title}</a></h2>
+            <ul>
+              {section.entries.map((entry) => (
+                <li><a href={`#${entry.id}`}>{entry.name}</a></li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+
+      {reference.sections.map((section) => (
+        <section id={`section-${section.id}`} class="reference-section">
+          <h2>{section.title}</h2>
+          {section.entries.map((entry) => <Entry entry={entry} />)}
+        </section>
+      ))}
+    </div>
+  </section>
+</Shell>
