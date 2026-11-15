@@ -6,6 +6,7 @@ description: "Declare variables with a default, set them from .vars files, XCL_V
 import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
 import CodeTabs from "../../components/CodeTabs.astro";
+import TsExample from "../../components/TsExample.astro";
 
 <Hero
   heading="Variables and outputs"
@@ -88,6 +89,11 @@ local.register_type(App, "app")
 with xcl.Config(registries=[local], variables={"region": "us"}) as cfg:
     cfg.apply("./config")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/variables-and-outputs/set-variables.ts" title="main.ts" region="show" />
 
   </div>
 </CodeTabs>
@@ -209,6 +215,11 @@ cfg.apply("./config")
 outputs = cfg.outputs()  # dict keyed by address
 print(outputs["output.url"])
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/variables-and-outputs/outputs.ts" title="main.ts" region="show" />
 
   </div>
 </CodeTabs>

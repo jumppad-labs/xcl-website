@@ -6,6 +6,7 @@ description: "Every shape an XCL entity type can declare: required and optional 
 import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
 import CodeTabs from "../../components/CodeTabs.astro";
+import TsExample from "../../components/TsExample.astro";
 
 <Hero
   heading="Attributes and blocks"
@@ -53,6 +54,11 @@ class App:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/required.ts" title="resources.ts" region="show" />
+
+  </div>
 </CodeTabs>
 
 ## Optional attributes
@@ -93,6 +99,11 @@ class App:
     replicas: int = 2
     name: str = xcl.field(label=True, default="")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/optional.ts" title="resources.ts" region="show" />
 
   </div>
 </CodeTabs>
@@ -150,6 +161,11 @@ class App:
     health: Health | None = None
     name: str = xcl.field(label=True, default="")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/nested.ts" title="resources.ts" region="show" />
 
   </div>
 </CodeTabs>
@@ -258,6 +274,11 @@ class App:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/list-of-blocks.ts" title="resources.ts" region="show" />
+
+  </div>
 </CodeTabs>
 
 ## Named blocks collected by name
@@ -325,6 +346,11 @@ class App:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/named-blocks.ts" title="resources.ts" region="show" />
+
+  </div>
 </CodeTabs>
 
 ## Map attributes
@@ -368,6 +394,11 @@ class App:
     labels: dict[str, str] = xcl.field(default_factory=dict)
     name: str = xcl.field(label=True, default="")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/map.ts" title="resources.ts" region="show" />
 
   </div>
 </CodeTabs>
@@ -493,6 +524,11 @@ class App:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/computed.ts" title="resources.ts" region="show" />
+
+  </div>
 </CodeTabs>
 
 ## Sensitive fields
@@ -532,6 +568,11 @@ class App:
     token: xcl.Sensitive[str] | None = None
     name: str = xcl.field(label=True, default="")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/sensitive.ts" title="resources.ts" region="show" />
 
   </div>
 </CodeTabs>
@@ -648,6 +689,11 @@ class Job(Workload):
 local.register_type(App, "app")
 local.register_type(Job, "job")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/shared-fields.ts" title="resources.ts" region="show" />
 
   </div>
 </CodeTabs>

@@ -6,6 +6,7 @@ description: "A module block brings in a directory of .xcl files with its own va
 import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
 import CodeTabs from "../../components/CodeTabs.astro";
+import TsExample from "../../components/TsExample.astro";
 
 <Hero
   heading="Modules"
@@ -154,6 +155,11 @@ fmt.Println(db.Location)
 db = cfg.find(PostgreSQL, "module.db.database.postgres.main")
 print(db.location)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/modules/find.ts" title="main.ts" region="show" />
 
   </div>
 </CodeTabs>

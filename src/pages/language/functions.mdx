@@ -6,6 +6,7 @@ description: "The 57 built-in functions configuration can call, grouped by what 
 import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
 import CodeTabs from "../../components/CodeTabs.astro";
+import TsExample from "../../components/TsExample.astro";
 
 <Hero
   heading="Functions"
@@ -269,6 +270,11 @@ with xcl.Config(registries=[local]) as cfg:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="language/functions/register.ts" title="main.ts" region="show" />
+
+  </div>
 </CodeTabs>
 
 In Go the function takes parameters of `string`, `bool` and number types, or
@@ -342,6 +348,11 @@ try:
 except xcl.FunctionNameClashError as e:
     print(e)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/functions/clash.ts" title="main.ts" region="show" />
 
   </div>
 </CodeTabs>
