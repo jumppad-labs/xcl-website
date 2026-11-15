@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 import { pythonParityURL } from "../config/site";
 
 <Hero
@@ -62,6 +63,13 @@ print(cfg.encode_entity(db))
 With `xcl.aio.Config` the call is `await cfg.encode_entity(db)`. Any entity a lookup returns works, as does an instance of a registered class you built yourself, and the `xcl.Entity` a lookup returns for a plugin's type. A field you change on a looked-up entity shows in the text.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/encode-entity.ts" region="show" title="main.ts" />
+
+`config.encodeEntity` returns a Promise of the text, so the call is awaited. Any entity a lookup returns works, as does an instance of a registered class you built yourself, and the generic `Entity` a lookup returns for a plugin's type. A field you change on a looked-up entity shows in the text.
+
+  </div>
 </CodeTabs>
 
 ```hcl
@@ -104,6 +112,13 @@ text = cfg.encode_saved_entity(event.data)
 It takes the same keyword choices as `cfg.encode_entity`, such as `cfg.encode_saved_entity(event.data, include_computed=True)`. Here `event` is the `xcl.Event` an `on_event` handler receives, and `event.data` holds the saved record when the Config was created with `event_data=xcl.EventDataLevel.PROCESSED`. With `xcl.aio.Config` the call is `await cfg.encode_saved_entity(event.data)`.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/encode-saved-entity.ts" region="show" />
+
+It takes the same options as `config.encodeEntity`, such as `config.encodeSavedEntity(event.data, { includeComputed: true })`. Here `event` is the `Event` an `onEvent` handler receives, and `event.data` holds the saved record, as bytes, when the Config was created with `eventData: EventDataLevel.Processed`. Otherwise it is `undefined`.
+
+  </div>
 </CodeTabs>
 
 A saved record can be rendered at any time, including from an event handler
@@ -140,6 +155,16 @@ while an operation runs, from an event handler too, with
 `xcl.OperationInProgressError`: it reads the engine's own copy of the entity,
 which the operation is still changing. Render the event's saved record with
 `cfg.encode_saved_entity(event.data)` instead.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/render-on-event.ts" region="show" />
+
+Rendering a looked-up or edited entity with `config.encodeEntity` is refused
+while an operation runs, from an event handler too, with
+`OperationInProgressError`. Render the event's saved record with
+`config.encodeSavedEntity(event.data)` instead.
 
   </div>
 </CodeTabs>
@@ -184,6 +209,13 @@ text = cfg.encode_entity(entity)
 `cfg.encode_entity(entity)` works once the operation has finished: while it is running, from inside the handler too, it raises `xcl.OperationInProgressError`. From inside the handler, `cfg.encode_saved_entity(event.data)` gives the same text. An event entity kept and encoded after its operation has finished shows the engine's current value with `reveal_sensitive=True`, where Go's event data always shows the marker.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/event-entity.ts" region="show" />
+
+`config.encodeEntity(entity)` works once the operation has finished, as it does here for the events the handler kept: while it is running, from inside the handler too, it rejects with `OperationInProgressError`. From inside the handler, `config.encodeSavedEntity(event.data)` gives the same text.
+
+  </div>
 </CodeTabs>
 
 ## Provider-filled values
@@ -205,6 +237,11 @@ text, err := xcl.EncodeEntity(db, xcl.IncludeComputed())
 ```python
 text = cfg.encode_entity(db, include_computed=True)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/include-computed.ts" region="show" />
 
   </div>
 </CodeTabs>
@@ -239,6 +276,11 @@ text = cfg.encode_entity(db, include_empty=True)
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/include-empty.ts" region="show" />
+
+  </div>
 </CodeTabs>
 
 ## Sensitive values
@@ -264,6 +306,13 @@ text = cfg.encode_entity(db, reveal_sensitive=True)
 ```
 
 A looked-up entity holds only the marker, so the engine writes its own configured value. A value the entity holds for real, such as one you changed or one set on an instance you built yourself, is written as it is. An event entity kept until after its operation shows the engine's current value, unlike Go's event data.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/reveal-sensitive.ts" region="show" />
+
+A looked-up entity holds only the marker, so the engine writes its own configured value. A value the entity holds for real, such as one you changed or one set on an instance you built yourself, is written as it is.
 
   </div>
 </CodeTabs>
@@ -329,6 +378,13 @@ text, err := xcl.EncodeEntity(app, xcl.ShowReferences())
 ```python
 text = cfg.encode_entity(app, show_references=True)
 ```
+
+An instance you built yourself has no references, so its values are written as they are.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/show-references.ts" region="show" />
 
 An instance you built yourself has no references, so its values are written as they are.
 
@@ -415,6 +471,13 @@ cfg.print_entity(db,
 `cfg.print_entity` writes to `sys.stdout` unless you pass a stream as its second argument, and takes the encoding keywords on this page beside the printing keywords `formatter=` and `theme=`. `cfg.print_saved_entity(event.data, include_computed=True)` prints a saved record the same way, from an `on_event` handler while an operation runs too, as `cfg.encode_saved_entity` does. Both raise what the encode calls raise, writing nothing. With `xcl.aio.Config` the calls are awaited, such as `await cfg.print_entity(db)`.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/print-entity.ts" region="show" title="main.ts" />
+
+`config.printEntity` writes to `process.stdout` unless you pass a writer as `out`, and takes the encoding options on this page beside the printing options `formatter` and `theme`. It rejects with what `config.encodeEntity` rejects with, writing nothing.
+
+  </div>
 </CodeTabs>
 
 The printing options are `xcl.WithFormatter`, which picks the format and
@@ -465,6 +528,13 @@ with open("database.svg", "w", encoding="utf-8") as file:
 The five formats are `xcl.highlight.PLAIN`, the default, `TERMINAL`, `HTML`, `HTML_INLINE` and `SVG`, and each writes the same bytes as Go's.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/svg.ts" region="show" />
+
+The five formats are `plain`, the default, `terminal`, `html`, `htmlInline` and `svg`, all exported by `xcl-lang`, and each writes the same bytes as Go's.
+
+  </div>
 </CodeTabs>
 
 `highlight.Terminal` writes the 16 named colours as the terminal's own
@@ -508,6 +578,13 @@ cfg.print_entity(db, formatter=formatter)
 ```
 
 `xcl.highlight.for_stream(stream)` makes the same choice as `highlight.For`: `TERMINAL` when `stream.isatty()` is true and `NO_COLOR` is unset or empty, and `PLAIN` for anything else, such as a file, a pipe or a `StringIO`.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/choose-formatter.ts" region="show" />
+
+`forStream(stream)` makes the same choice as `highlight.For`: `terminal` when `stream.isTTY` is true and `NO_COLOR` is unset or empty, and `plain` for anything else, such as a file or a pipe.
 
   </div>
 </CodeTabs>
@@ -568,6 +645,13 @@ cfg.print_entity(db, formatter=xcl.highlight.TERMINAL, theme=theme)
 A theme is a mapping of `xcl.highlight.Kind` to style string. `DEFAULT_THEME` cannot be changed in place, and `|` gives a new theme with the default's styles and the given ones in their place.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/theme.ts" region="show" />
+
+A theme is a plain object of style strings keyed by `Kind`. `defaultTheme` is frozen, and a spread gives a new theme with the default's styles and the given ones in their place.
+
+  </div>
 </CodeTabs>
 
 Kinds are grouped into categories, and a kind the theme does not style takes
@@ -615,6 +699,13 @@ except xcl.InvalidStyleError as err:
 ```
 
 `validate` raises one `xcl.InvalidStyleError` naming every unknown word, one line for each, and its `words` holds a `(kind, style, word)` for each.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/validate-theme.ts" region="show" />
+
+`validateTheme` throws one `InvalidStyleError` naming every unknown word, and its `words` holds a `{ kind, style, word }` for each.
 
   </div>
 </CodeTabs>
@@ -678,6 +769,13 @@ cfg.print_entity(db, formatter=TERMINAL, theme=theme)
 ```
 
 `load_vscode_theme` takes the theme file's path, or its contents as bytes. The engine converts it with the same rules as Go, so the theme is the same in both languages.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/vscode-theme.ts" region="show" />
+
+`loadVSCodeTheme` takes the theme file's path, or its contents as bytes, and needs no Config. The engine converts it with the same rules as Go, so the theme is the same in both languages.
 
   </div>
 </CodeTabs>
@@ -779,6 +877,13 @@ Path("xcl.css").write_text(css(DEFAULT_THEME))
 `xcl.highlight.css(theme)` returns the stylesheet as a string, identical to the one Go writes for the same theme.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/write-css.ts" region="show" />
+
+`css(theme)` returns the stylesheet as a string, identical to the one Go writes for the same theme. The package also ships the default one as `xcl-lang/xcl.css`.
+
+  </div>
 </CodeTabs>
 
 ```css title="xcl.css"
@@ -825,6 +930,13 @@ page.render(entity=Markup(entity.getvalue()))
 ```
 
 In a Jinja template the HTML is marked safe with `markupsafe.Markup`, or the `|safe` filter, so the template writes it as it is.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/server-template.ts" region="show" />
+
+The markup `html` writes is already escaped, so a template literal puts it into the page as it is.
 
   </div>
 </CodeTabs>
@@ -912,6 +1024,13 @@ cfg.print_entity(db, formatter=bbcode)
 A format is any object with a `format(out, theme, tokens)` method, the `xcl.highlight.Formatter` protocol, and it writes to the stream `out`. Each `xcl.highlight.Token` has a `kind` and its `text`. `xcl.highlight.style_for(theme, kind)` resolves a style through its category and `TEXT`, and `xcl.highlight.hex_colour` gives a named colour as its fixed hex colour. For a known kind, `token.kind.parent` and `token.kind.css_class` give its category and HTML class. A kind from a newer engine that the package does not know arrives as its number, and `style_for` and `xcl.highlight.parent_of(number)` still take it to its category.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/bbcode.ts" region="show" />
+
+A format is a function of the `Formatter` type, `(out, theme, tokens) => void`, and it writes to `out`, any object with a `write(chunk)` method. Each `Token` has a `kind` and its `text`. `styleFor(theme, kind)` resolves a style through its category and `Kind.Text`. `style.foreground` is the colour as the theme names it, such as `magenta` or `#6a9955`: the package has no hex form of a named colour, so this format writes the name where Go's writes `#bc3fbc`. `parentOf(kind)` and `cssClassOf(kind)` give a kind's category and HTML class. A kind from a newer engine that the package does not know arrives as its number, and `styleFor` and `parentOf` still take it to its category.
+
+  </div>
 </CodeTabs>
 
 For the same entity it prints:
@@ -973,6 +1092,13 @@ bbcode.format(sys.stdout, xcl.highlight.DEFAULT_THEME, tokens)
 ```
 
 `cfg.saved_entity_tokens(event.data)` labels a saved record's text the same way, from an `on_event` handler too, and with `xcl.aio.Config` both are awaited. Python has no `highlight.Tokenize`: labelled text comes from the engine, through `cfg.entity_tokens`, `cfg.saved_entity_tokens`, an error's `err.tokens` and a diff's `diff.tokens`. See the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="configuration-text/entity-tokens.ts" region="show" />
+
+TypeScript has no public `savedEntityTokens`: a saved record is rendered as plain text with `config.encodeSavedEntity(event.data)`, and the pretty logger labels the records it shows itself. Nor is there a `highlight.Tokenize`: labelled text comes from the engine, through `config.entityTokens`, an error's `err.tokens` and a diff's `diff.tokens`.
 
   </div>
 </CodeTabs>
