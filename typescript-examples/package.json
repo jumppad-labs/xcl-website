@@ -1,0 +1,10 @@
+{
+  "name": "xcl-website-typescript-examples",
+  "private": true,
+  "type": "module",
+  "description": "Every TypeScript example on xcl.dev, as real source compiled against the pinned xcl-lang. scripts/check-typescript-examples.mjs installs that release and runs tsc.",
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3"
+  }
+}

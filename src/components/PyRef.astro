@@ -5,6 +5,9 @@
 // workflow sets XCL_REFERENCE_STRICT to make it a failure.
 import { hasEntry } from "../lib/pythonReference";
 
+// the build runs in Node, whose environment the site's types do not declare
+declare const process: { env: Record<string, string | undefined> };
+
 interface Props {
   name: string;
   label?: string;

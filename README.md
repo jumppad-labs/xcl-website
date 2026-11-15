@@ -50,6 +50,34 @@ XCL_PYTHON_REFERENCE=/tmp/python.json XCL_TYPESCRIPT_REFERENCE=/tmp/typescript.j
 
 Either variable can be set alone; the other language is still downloaded.
 
+## TypeScript examples
+
+Every TypeScript example on the site is real source in `typescript-examples/`,
+a strict TypeScript project of its own, so the compiler checks it against the
+released package. A page shows one with the `TsExample` component:
+
+```mdx
+<TsExample file="events/handler.ts" />
+<TsExample file="guide/program.ts" region="apply" title="main.ts" />
+```
+
+`file` is the path below `typescript-examples/`, and `region` shows only the
+lines between `// #region <name>` and `// #endregion`, so the imports and setup
+a fragment needs to compile can sit outside the part a page shows. A missing
+file or region fails the build.
+
+`npm run check:typescript` installs the `xcl-lang` version pinned in
+`xcl-typescript-ref.txt`, without its engine packages, and compiles the
+project; a type error fails it, naming the file and line. To compile against
+an unreleased package, point it at a tarball from `npm pack` in an
+xcl-typescript checkout:
+
+```
+XCL_TYPESCRIPT_PACKAGE=/path/to/xcl-lang-0.0.0-dev.tgz npm run check:typescript
+```
+
+The site's own `astro check` does not read `typescript-examples/`.
+
 ## Pages
 
 | Page | Source |
