@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 import { pythonParityURL } from "../config/site";
 
 <Hero
@@ -80,6 +81,11 @@ with xcl.Config(
 ) as cfg:
     ...
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="state-masking/encrypt.ts" region="show" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -173,6 +179,11 @@ func (m vaultMasker) Unmask(masked json.RawMessage) (json.RawMessage, error) {
   <div slot="python">
 
 Writing your own masker is not yet available from Python. Python programs choose one of the built-in masks `xcl.mask.aes256gcm(key)`, `xcl.mask.hmac_sha256(key)`, `xcl.mask.redact()` and `xcl.mask.omit()`; see the <a href={pythonParityURL}>parity list</a> for what the package offers.
+
+  </div>
+  <div slot="typescript">
+
+Writing your own masker is not available from TypeScript: each `Mask` names one of the masks the engine runs. TypeScript programs choose one of the built-in masks `mask.aes256gcm(key)`, `mask.hmacSha256(key)`, `mask.redact()` and `mask.omit()`; see the <a href="https://github.com/jumppad-labs/xcl-typescript/blob/main/PARITY.md">parity list</a> for what the package offers.
 
   </div>
 </CodeTabs>

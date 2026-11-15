@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 
 <Hero
   heading="Sensitive values"
@@ -69,6 +70,11 @@ class Secret:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="sensitive-values/secret.ts" />
+
+  </div>
 </CodeTabs>
 
 Here `T` is a map, so every value the secret holds is sensitive:
@@ -126,6 +132,13 @@ print(found.data.is_redacted)     # True
 ```
 
 In Python, `reveal()` on a looked-up value returns `None`, because real values never leave the engine through a lookup; a sensitive value is only revealed on the Go side, or read from state. Only an `xcl.Sensitive` the program constructed itself, such as `xcl.Sensitive("hunter2")`, reveals its value.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="sensitive-values/lookup.ts" region="show" />
+
+In TypeScript, `reveal()` on a looked-up value returns `undefined`, because real values never leave the engine through a lookup; a sensitive value is only revealed on the Go side, or read from state. Only a `Sensitive` the program constructed itself, such as `new Sensitive("hunter2")`, reveals its value.
 
   </div>
 </CodeTabs>
@@ -191,6 +204,13 @@ except xcl.ConfigError as err:
 ```
 
 In Python the registered class declares the field, so the mismatch is caught at validation: assigning a sensitive value to the plain `password` raises `xcl.ConfigError`, whose `problems` carry the file and line of the assignment.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="sensitive-values/plain-field.ts" region="show" />
+
+In TypeScript the registered class declares the field, so the mismatch is caught at validation: assigning a sensitive value to the plain `password` rejects with `ConfigError`, whose `problems` carry the file and line of the assignment.
 
   </div>
 </CodeTabs>
