@@ -1,0 +1,29 @@
+---
+// A link to a name in the TypeScript reference, by its full dotted name, such
+// as xcl-lang.Config.apply. A name the reference does not have renders as
+// plain code with a build warning, so a release that renames something still
+// reaches the site; the site's checks set XCL_REFERENCE_STRICT to make it a
+// failure.
+import { hasEntry } from "../lib/typescriptReference";
+
+// the build runs in Node, whose environment the site's types do not declare
+declare const process: { env: Record<string, string | undefined> };
+
+interface Props {
+  name: string;
+  label?: string;
+}
+
+const { name, label } = Astro.props;
+const text = label ?? name;
+const known = hasEntry(name);
+
+if (!known) {
+  const message = `TsRef: the TypeScript reference has no entry named ${name}`;
+  if (process.env.XCL_REFERENCE_STRICT === "1") {
+    throw new Error(message);
+  }
+  console.warn(message);
+}
+---
+{known ? <a href={`/reference/typescript/#${name}`}><code>{text}</code></a> : <code>{text}</code>}

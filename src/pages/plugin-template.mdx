@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 import { templateURL } from "../config/site";
 
 <Hero
@@ -24,7 +25,7 @@ it needs no Docker, no cloud account and no service: a repository made from
 it builds, passes its tests and applies its sample straight away.
 
 Plugins are written in Go for now. A plugin built from this template works
-from both Go and Python applications.
+from Go, Python and TypeScript applications.
 
 ```hcl title="examples/basic/main.xcl"
 variable "directory" {
@@ -157,6 +158,11 @@ local.register_external_plugin("./build/xcl-plugin-template-go")  # a separate p
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="plugin-template/register.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 ## Release
@@ -212,6 +218,11 @@ cfg = xcl.Config(registries=[gh])
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="plugin-template/install.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 [Installing plugins from GitHub](/github-registry/) covers pinning, private
@@ -261,6 +272,11 @@ public_key = Path("jumppad-labs-releases.asc").read_text()
 gh = xcl.GitHubRegistry(trusted_keys=[public_key])
 gh.register_plugin("jumppad-labs/xcl-plugin-template-go", "v0.1.0")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="plugin-template/verify.ts" title="main.ts" />
 
   </div>
 </CodeTabs>

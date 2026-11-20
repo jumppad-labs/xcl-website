@@ -1,0 +1,64 @@
+---
+// Shows a TypeScript example from typescript-examples/, the project the site's
+// checks compile against the pinned xcl-lang, in the site's normal code frame.
+// `file` is the path below typescript-examples/, and `region` names the lines
+// between `// #region <name>` and `// #endregion` to show; with no region the
+// whole file is shown. Region markers are never shown. A missing file or
+// region fails the build, naming the page.
+import { Code } from "astro-expressive-code/components";
+
+interface Props {
+  file: string;
+  region?: string;
+  title?: string;
+}
+
+const { file, region, title } = Astro.props;
+
+const sources = import.meta.glob<string>("/typescript-examples/**/*.ts", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+
+const key = `/typescript-examples/${file}`;
+const source = sources[key];
+if (source === undefined) {
+  throw new Error(`TsExample on ${Astro.url.pathname}: there is no typescript-examples/${file}`);
+}
+
+const marker = /^\s*\/\/\s*#(end)?region\b/;
+let lines = source.replace(/\r\n/g, "\n").split("\n");
+
+if (region !== undefined) {
+  const start = lines.findIndex((line) => new RegExp(`^\\s*//\\s*#region\\s+${region}\\s*$`).test(line));
+  if (start === -1) {
+    throw new Error(`TsExample on ${Astro.url.pathname}: typescript-examples/${file} has no region "${region}"`);
+  }
+  let depth = 0;
+  let end = -1;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\s*\/\/\s*#region\b/.test(lines[i])) depth++;
+    if (/^\s*\/\/\s*#endregion\b/.test(lines[i])) {
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (end === -1) {
+    throw new Error(`TsExample on ${Astro.url.pathname}: region "${region}" in typescript-examples/${file} has no #endregion`);
+  }
+  lines = lines.slice(start + 1, end);
+}
+
+lines = lines.filter((line) => !marker.test(line));
+while (lines.length && lines[0].trim() === "") lines.shift();
+while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+
+const indents = lines.filter((line) => line.trim() !== "").map((line) => line.match(/^ */)![0].length);
+const indent = indents.length ? Math.min(...indents) : 0;
+const code = lines.map((line) => line.slice(indent)).join("\n");
+---
+<Code code={code} lang="ts" title={title} />

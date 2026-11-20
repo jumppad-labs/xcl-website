@@ -1,9 +1,13 @@
-# Moves the Python reference to a new xcl-python release. xcl-python's release
-# workflow dispatches it (event xcl-python-release) with the tag once the
-# GitHub release carries the reference data; it can also be run by hand.
+# Moves a language reference to a new release of its package. xcl-python's
+# release workflow dispatches it (event xcl-python-release), and
+# xcl-typescript's (event xcl-typescript-release), with the tag once the GitHub
+# release carries the reference data; it can also be run by hand, naming the
+# package.
 #
-# It writes the tag to xcl-python-ref.txt, builds the site, which downloads
-# that release's data, and pushes to main only if the build passes. A failing
+# It writes the tag to that package's pin, xcl-python-ref.txt or
+# xcl-typescript-ref.txt, builds the site, which downloads that release's data,
+# and pushes to main only if the build passes. The other package's pin is left
+# alone. A failing
 # build leaves the pin and the site where they are. The push uses a token of
 # the xcl release bot GitHub App, since a push made with the built-in
 # GITHUB_TOKEN starts no workflows: the App's push is what starts deploy.yml.
@@ -14,11 +18,16 @@ name: Reference bump
 
 on:
   repository_dispatch:
-    types: [xcl-python-release]
+    types: [xcl-python-release, xcl-typescript-release]
   workflow_dispatch:
     inputs:
+      package:
+        description: The package whose reference to move
+        required: true
+        type: choice
+        options: [python, typescript]
       tag:
-        description: The xcl-python tag to pin, e.g. v0.15.0
+        description: The package's tag to pin, e.g. v0.15.0
         required: true
         type: string
 
@@ -35,7 +44,30 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.client_payload.tag || inputs.tag }}
+      EVENT: ${{ github.event.action }}
+      PACKAGE_INPUT: ${{ inputs.package }}
     steps:
+      # the pin to move: the dispatch's event names the package, and a manual
+      # run names it as an input
+      - name: Choose the package
+        id: package
+        run: |
+          case "$EVENT" in
+            xcl-python-release) package=python ;;
+            xcl-typescript-release) package=typescript ;;
+            *) package="$PACKAGE_INPUT" ;;
+          esac
+          case "$package" in
+            python | typescript) ;;
+            *)
+              echo "the package must be python or typescript, got '$package'"
+              exit 1
+              ;;
+          esac
+          echo "moving the xcl-$package reference to $TAG"
+          echo "name=xcl-$package" >> "$GITHUB_OUTPUT"
+          echo "pin=xcl-$package-ref.txt" >> "$GITHUB_OUTPUT"
+
       - name: Check the tag
         run: |
           if ! grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<< "$TAG"; then
@@ -58,15 +90,17 @@ jobs:
 
       - name: Write the pin
         id: pin
+        env:
+          PIN: ${{ steps.package.outputs.pin }}
         run: |
-          current="$(tr -d '[:space:]' < xcl-python-ref.txt)"
+          current="$(tr -d '[:space:]' < "$PIN")"
           newest="$(printf '%s\n%s\n' "$current" "$TAG" | sort -V | tail -n 1)"
           if [ "$newest" = "$current" ]; then
             echo "main pins $current, which is $TAG or newer; nothing to do"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "$TAG" > xcl-python-ref.txt
+          echo "$TAG" > "$PIN"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
@@ -90,11 +124,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          PIN: ${{ steps.package.outputs.pin }}
+          PACKAGE: ${{ steps.package.outputs.name }}
         run: |
           # commit as the App's bot user
           user_id="$(gh api "users/${APP_SLUG}[bot]" --jq .id)"
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
-          git add xcl-python-ref.txt
-          git commit -m "Use xcl-python $TAG for the reference"
+          git add "$PIN"
+          git commit -m "Use $PACKAGE $TAG for the reference"
           git push origin main

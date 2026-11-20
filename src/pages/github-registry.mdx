@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 
 <Hero
   heading="Installing plugins from GitHub"
@@ -59,6 +60,11 @@ with xcl.Config(
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="github-registry/declaring.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 Registering only records, as on the local registry. The plugin is named after
@@ -101,6 +107,18 @@ applied when `xcl.Config` is created, before anything is downloaded, but not
 as a Python exception: the engine panics, the panic is not recovered, and the
 process exits with the message naming the plugin on standard error. Check a
 repository and version before declaring them when they come from input.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="github-registry/pinning.ts" region="show" title="main.ts" />
+
+In TypeScript, `registerPlugin` only records the declaration. The same rule is
+applied when the configuration is created in the engine, on its first call,
+before anything is downloaded, but not as an error naming the declaration: the
+engine panics and exits, writing the message naming the plugin to standard
+error, and the call rejects with `EngineExitedError`. Check a repository and version before
+declaring them when they come from input.
 
   </div>
 </CodeTabs>
@@ -184,6 +202,11 @@ github.register_plugin("acme/xcl-plugin-billing", "v2.0.1")
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="github-registry/trusted-keys.ts" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 A release signed by another key, or not signed at all, is refused and nothing
@@ -216,6 +239,11 @@ import os
 github = xcl.GitHubRegistry(token=os.environ["ACME_PLUGINS_TOKEN"])
 github.register_plugin("acme/xcl-plugin-billing", "v2.0.1")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="github-registry/token.ts" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -260,6 +288,11 @@ gh := registry.NewGitHub(registry.GitHubCacheDir("./.xcl/plugins"))
 ```python title="main.py"
 github = xcl.GitHubRegistry(cache_dir="./.xcl/plugins")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="github-registry/cache-dir.ts" region="show" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -324,6 +357,15 @@ except xcl.PluginNotFoundError as err:
 
 In Python, the failed operation raises `xcl.PluginNotFoundError` or
 `xcl.PluginVerificationError`, and `err.details` carries the `repository`,
+`version` and `platform`.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="github-registry/errors.ts" region="show" title="main.ts" />
+
+In TypeScript, the failed operation rejects with `PluginNotFoundError` or
+`PluginVerificationError`, and `err.details` carries the `repository`,
 `version` and `platform`.
 
   </div>

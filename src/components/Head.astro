@@ -6,7 +6,7 @@ interface Props {
 
 const { title, description } = Astro.props;
 const fallbackDescription =
-  "XCL is a relational configuration language built on the readability of HCL: references between blocks, graph-based processing, plugins, variables, modules, functions and state. Go implementation available now.";
+  "XCL is a relational configuration language built on the readability of HCL: references between blocks, graph-based processing, plugins, variables, modules, functions and state. Available for Go, Python and TypeScript.";
 ---
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -19,7 +19,8 @@ const fallbackDescription =
   (function () {
     var lang = "go";
     try {
-      if (localStorage.getItem("xcl-lang") === "python") lang = "python";
+      var stored = localStorage.getItem("xcl-lang");
+      if (stored === "python" || stored === "typescript") lang = stored;
     } catch (e) {}
     document.documentElement.dataset.lang = lang;
   })();

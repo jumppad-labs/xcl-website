@@ -71,7 +71,8 @@ const resolvedDescription = description ?? frontmatter?.description;
         if (tabs.length === 0) return;
 
         function current() {
-          return root.dataset.lang === 'python' ? 'python' : 'go';
+          var lang = root.dataset.lang;
+          return lang === 'python' || lang === 'typescript' ? lang : 'go';
         }
 
         function sync() {

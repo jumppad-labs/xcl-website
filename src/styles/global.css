@@ -316,6 +316,13 @@
   overflow-wrap: anywhere;
 }
 
+/* each form of a name with several signatures, set apart from the next */
+.reference-overload + .reference-overload {
+  border-top: 1px dashed var(--color-border-subtle);
+  margin-top: 0.75rem;
+  padding-top: 0.25rem;
+}
+
 .reference-description,
 .reference-fields {
   color: var(--color-text-secondary);

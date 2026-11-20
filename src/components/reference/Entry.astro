@@ -1,6 +1,7 @@
 ---
 import Badge from "../Badge.astro";
-import type { ReferenceEntry } from "../../lib/pythonReference";
+import Fields from "./Fields.astro";
+import type { ReferenceEntry } from "../../lib/reference";
 
 interface Props {
   entry: ReferenceEntry;
@@ -9,7 +10,6 @@ interface Props {
 
 const { entry, depth = 0 } = Astro.props;
 const Heading = depth === 0 ? "h3" : "h4";
-const hasFields = entry.parameters?.length || entry.returns || entry.raises?.length;
 ---
 <div id={entry.id} class={`reference-entry ${depth === 0 ? "reference-entry-top" : "reference-entry-member"}`}>
   <div class="flex items-center gap-2 flex-wrap">
@@ -23,51 +23,21 @@ const hasFields = entry.parameters?.length || entry.returns || entry.raises?.len
 
   {entry.description && <div class="xcl-body reference-description" set:html={entry.description} />}
 
-  {hasFields && (
-    <dl class="reference-fields">
-      {entry.parameters?.length ? (
-        <>
-          <dt>Parameters</dt>
-          <dd>
-            <ul>
-              {entry.parameters.map((parameter) => (
-                <li>
-                  <code>{parameter.name}</code>
-                  {parameter.type && <span class="reference-type"> {parameter.type}</span>}
-                  {parameter.default && <span class="reference-type"> = {parameter.default}</span>}
-                  {parameter.description && <div class="xcl-body" set:html={parameter.description} />}
-                </li>
-              ))}
-            </ul>
-          </dd>
-        </>
-      ) : null}
-      {entry.returns && (
-        <>
-          <dt>Returns</dt>
-          <dd>
-            {entry.returns.type && <code>{entry.returns.type}</code>}
-            {entry.returns.description && <div class="xcl-body" set:html={entry.returns.description} />}
-          </dd>
-        </>
-      )}
-      {entry.raises?.length ? (
-        <>
-          <dt>Raises</dt>
-          <dd>
-            <ul>
-              {entry.raises.map((raised) => (
-                <li>
-                  <code>{raised.type}</code>
-                  {raised.description && <div class="xcl-body" set:html={raised.description} />}
-                </li>
-              ))}
-            </ul>
-          </dd>
-        </>
-      ) : null}
-    </dl>
-  )}
+  <Fields parameters={entry.parameters} returns={entry.returns} raises={entry.raises} />
+
+  {entry.overloads?.length ? (
+    <div class="reference-overloads">
+      {entry.overloads.map((overload) => (
+        <div class="reference-overload">
+          <pre class="reference-signature"><code>{overload.signature}</code></pre>
+          {overload.description && overload.description !== entry.description && (
+            <div class="xcl-body reference-description" set:html={overload.description} />
+          )}
+          <Fields parameters={overload.parameters} returns={overload.returns} raises={overload.raises} />
+        </div>
+      ))}
+    </div>
+  ) : null}
 
   {entry.members?.length ? (
     <div class="reference-members">

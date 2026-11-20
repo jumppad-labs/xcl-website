@@ -15,6 +15,7 @@ preview: build
 check:
 	npm run reference
 	npx astro check
+	npm run check:typescript
 
 clean:
 	rm -rf dist .astro

@@ -6,6 +6,7 @@ description: "Refer to another entity's attribute, a whole entity or a named blo
 import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
 import CodeTabs from "../../components/CodeTabs.astro";
+import TsExample from "../../components/TsExample.astro";
 
 <Hero
   heading="References and processing order"
@@ -65,7 +66,10 @@ receives a copy of the entity: its labels and attributes, and its `Meta` when
 the struct has a `Meta types.Meta` field. In Python the field is typed as the
 referenced dataclass, or a list of it, marked `xcl.field(block=False)` so it
 is an attribute rather than a nested block, and receives the same, its `meta`
-included when the dataclass declares one:
+included when the dataclass declares one. In TypeScript the field is
+`@Attribute(() => PostgreSQL)`, or `@Attribute([() => PostgreSQL])` for a
+list, and the referenced class declares a `@Meta()` or `@Label()` field, which
+makes its value an entity rather than a plain object:
 
 <CodeTabs>
   <div slot="go">
@@ -105,6 +109,11 @@ class App:
     databases: list[PostgreSQL] = xcl.field(block=False, default_factory=list)
     name: str = xcl.field(label=True, default="")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/references/entity-values.ts" title="resources.ts" region="show" />
 
   </div>
 </CodeTabs>

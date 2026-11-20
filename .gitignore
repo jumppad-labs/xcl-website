@@ -2,3 +2,4 @@
 dist/
 .astro/
 src/generated/
+typescript-examples/node_modules/

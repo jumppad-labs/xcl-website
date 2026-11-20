@@ -6,6 +6,7 @@ description: "An XCL entity is declared by a block: its type, optional subtype a
 import Hero from "../../components/sections/Hero.astro";
 import Prose from "../../components/sections/Prose.astro";
 import CodeTabs from "../../components/CodeTabs.astro";
+import TsExample from "../../components/TsExample.astro";
 
 <Hero
   heading="Entities"
@@ -69,6 +70,11 @@ local.register_type(App, "app")                          # app "web" {}
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="language/entities/labels.ts" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 A block written with too few or too many labels is reported at the block,
@@ -123,6 +129,11 @@ class Runner:
 
 local.register_type(Runner, "runner")  # runner {}
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/entities/singleton.ts" title="main.ts" region="show" />
 
   </div>
 </CodeTabs>
@@ -239,6 +250,11 @@ class App:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="language/entities/meta.ts" title="resources.ts" region="show" />
+
+  </div>
 </CodeTabs>
 
 Reading them back from an entity the application has found:
@@ -267,14 +283,19 @@ print(app.meta.depends_on, app.meta.disabled)
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="language/entities/read-meta.ts" title="main.ts" region="show" />
+
+  </div>
 </CodeTabs>
 
 ## Entity types
 
 The language itself declares three types: `variable`, `output` and
 `module`. Every other type comes from the application that reads the
-configuration, either a plain Go or Python type it registers, or a type a
-plugin provides together with the provider that runs it. Both are given to a
+configuration, either a plain Go, Python or TypeScript type it registers, or
+a type a plugin provides together with the provider that runs it. Both are given to a
 `Config` through [registries](/registries/), and a configuration can only use
 types the `Config` was given.
 

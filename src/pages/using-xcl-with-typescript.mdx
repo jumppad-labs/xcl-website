@@ -1,0 +1,276 @@
+---
+layout: ../layouts/Shell.astro
+title: "Using XCL with TypeScript - xcl"
+description: "From an empty program to a working one in TypeScript: install xcl-lang from npm, register entity types and functions, use a Go plugin, apply, keep state, find entities, handle errors, cancel, log and destroy."
+---
+import Hero from "../components/sections/Hero.astro";
+import Prose from "../components/sections/Prose.astro";
+import CtaBanner from "../components/sections/CtaBanner.astro";
+import Button from "../components/Button.astro";
+import TsRef from "../components/TsRef.astro";
+import TsExample from "../components/TsExample.astro";
+import { npmURL } from "../config/site";
+
+<Hero
+  heading="Using XCL with TypeScript"
+  sub="From an empty program to a working one: a Node program that reads XCL, applies it through a Go plugin, keeps state and tears it all down."
+/>
+
+<Prose>
+
+XCL is a configuration language of its own. A file describes entities and how
+they relate, and a program decides what those entities do. This guide builds
+one TypeScript program a section at a time. The
+[complete program](#the-complete-program) is near the bottom of the page.
+Every name links to its entry in the
+[TypeScript reference](/reference/typescript/).
+
+## Install
+
+Start an empty project and install <a href={npmURL}>xcl-lang from npm</a>,
+with TypeScript to compile the program. The package needs Node 22.12 or
+later, and it brings the engine for your platform with it, so you need no Go
+or C compiler.
+
+```sh
+mkdir xcl-guide && cd xcl-guide
+npm init -y
+npm pkg set type=module
+npm install xcl-lang
+npm install --save-dev typescript @types/node
+```
+
+Put this in `tsconfig.json`. The program uses decorators and `await using`:
+decorators need no setting, and `esnext.disposable` gives `await using` its
+types.
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "esnext.disposable"],
+    "types": ["node"],
+    "strict": true,
+    "outDir": "build"
+  },
+  "include": ["main.ts"]
+}
+```
+
+The plugin used below needs a running Docker engine. Everything else in the
+guide does not.
+
+## Write some configuration
+
+Put this in `infra/main.xcl`. It has one entity of a type the program will
+define, `settings`, which calls a function the program will provide, and two
+entities from the Docker plugin. The container refers to the settings and to
+the network, so XCL creates them first.
+
+```hcl title="infra/main.xcl"
+settings "web" {
+  image    = "nginx:1.27-alpine"
+  replicas = 2
+  greeting = shout("hello")
+}
+
+docker "network" "main" {
+  subnet = "10.73.0.0/24"
+}
+
+docker "container" "web" {
+  image = settings.web.image
+
+  network {
+    name = docker.network.main.meta.name
+  }
+}
+```
+
+## Register a type and a function
+
+An entity type is a class named by <TsRef name="xcl-lang.Entity" label="@Entity" />,
+with each field declared by <TsRef name="xcl-lang.Attribute" label="@Attribute" />.
+A field with no initializer is required, and an initializer is its default.
+The optional <TsRef name="xcl-lang.Meta" label="@Meta" /> field receives the
+entity's metadata. A function is a method marked with
+<TsRef name="xcl-lang.Func" label="@Func" />, which gives its parameter and
+result types. The [registries guide](/registries/) covers both in detail.
+
+<TsExample file="guide/program.ts" region="types" title="main.ts" />
+
+## Use a Go plugin
+
+Plugins are written in Go and run as separate programs, and a TypeScript
+program uses the same ones a Go program does. A
+<TsRef name="xcl-lang.GitHubRegistry" label="GitHubRegistry" /> installs a
+plugin from its signed GitHub release on first use, and
+<TsRef name="xcl-lang.GitHubRegistry.registerPlugin" label="registerPlugin" />
+names the repository and the release. Download the key that signs the Docker
+plugin's releases next to your program:
+
+```sh
+curl -O https://xcl.dev/keys/jumppad-labs-releases.asc
+```
+
+Then build the registries in one place, since each run of the program needs
+them. <TsRef name="xcl-lang.LocalRegistry.register" label="LocalRegistry.register" />
+takes the program's own types, and
+<TsRef name="xcl-lang.LocalRegistry.registerFunctions" label="registerFunctions" />
+offers every `@Func` method of an object:
+
+<TsExample file="guide/program.ts" region="registries" title="main.ts" />
+
+[Installing plugins from GitHub](/github-registry/) explains pinning, private
+repositories and the cache. Writing a plugin or a provider in TypeScript is
+not yet supported; the [plugin template](/plugin-template/) starts a new one
+in Go.
+
+## Apply and keep state
+
+A <TsRef name="xcl-lang.Config" label="Config" /> holds the registries and
+the directory that state is saved in,
+<TsRef name="xcl-lang.ConfigOptions.statePath" label="statePath" />.
+<TsRef name="xcl-lang.Config.apply" label="apply" /> reads the configuration
+at the paths you give it and creates, updates and destroys entities to match,
+saving state as it goes. <TsRef name="xcl-lang.Config.entityCount" label="entityCount" />
+says how many entities the configuration now holds. `await using` closes the
+configuration when the function returns.
+
+<TsExample file="guide/program.ts" region="apply" title="main.ts" />
+
+Creating a `Config` does no work of its own: the configuration is created in
+the engine on its first call, here `apply`, which is when a registration the
+engine refuses is reported. A program that wants to fail at start-up instead,
+such as a service checking its configuration as it boots, calls
+<TsRef name="xcl-lang.Config.setup" label="setup" /> first.
+
+State is what lets a later run of the program know what exists. Applying again
+changes only what the configuration has changed. To encrypt sensitive values
+in it, see [state masking](/state-masking/).
+
+## Cancel an operation
+
+Every operation takes an `AbortSignal` as its
+<TsRef name="xcl-lang.OperationOptions.signal" label="signal" />. The program
+above makes one from an `AbortController` it aborts after ten minutes, and
+from <TsRef name="xcl-lang.interruptSignal" label="interruptSignal" />, which
+aborts when Ctrl-C is pressed:
+
+<TsExample file="guide/program.ts" region="cancel" title="main.ts" />
+
+When the signal aborts, the engine stops, saves the state of everything it
+finished, and `apply` rejects with
+<TsRef name="xcl-lang.CancelledError" label="CancelledError" />, which the
+program prints. Running it again carries on from where it stopped.
+
+## Find entities
+
+A second run reads the saved state with
+<TsRef name="xcl-lang.Config.load" label="load" /> and needs no configuration
+files. <TsRef name="xcl-lang.Config.find" label="find" /> takes an address and,
+given your class, returns an instance of it. With only an address it returns
+an <TsRef name="xcl-lang.Entity" label="Entity" />, which is how a program
+reads a plugin's types: its `meta`, and its `attributes` by camelCase name.
+<TsRef name="xcl-lang.Config.findByType" label="findByType" /> returns every
+entity of a type.
+
+<TsExample file="guide/program.ts" region="show" title="main.ts" />
+
+## Print an entity
+
+The last line of `show` uses
+<TsRef name="xcl-lang.Config.printEntity" label="printEntity" /> to write an
+entity back out as configuration text. With
+<TsRef name="xcl-lang.EncodeOptions.includeComputed" label="includeComputed: true" />
+it includes the values the plugin filled in:
+
+```hcl
+docker "network" "main" {
+  subnet    = "10.73.0.0/24"
+  docker_id = "131f23673a5011abcaa32775c6f6d2e110cee1c301a41e6e9f5304c1d7947de3" # set by the provider
+}
+```
+
+## Handle a configuration error
+
+The `catch` in `apply` also takes
+<TsRef name="xcl-lang.ConfigError" label="ConfigError" />, thrown for
+configuration that is not valid. <TsRef name="xcl-lang.printError" label="printError" />
+prints it for a person to read, and
+<TsRef name="xcl-lang.forStream" label="forStream" /> chooses colour when the
+stream is a terminal. Change `replicas` to `"two"` and apply, and you see
+where the mistake is:
+
+```text
+Error: Unsuitable value type
+
+  on infra/main.xcl line 3, in settings.web, field replicas:
+     1 | settings "web" {
+     2 |   image    = "nginx:1.27-alpine"
+     3 |   replicas = "two"
+     4 |   greeting = shout("hello")
+     5 | }
+
+Attribute "replicas": Unsuitable value: a number is required
+```
+
+The pretty logger, below, writes the same report beneath its error line. Put
+the value back before you continue.
+
+## Turn on logging
+
+XCL prints nothing of its own. Everything it and its plugins report is a
+stream of events, delivered to the
+<TsRef name="xcl-lang.ConfigOptions.onEvent" label="onEvent" /> handler you
+give it. The program's `apply` passes
+<TsRef name="xcl-lang.prettylog.handler" label="prettylog.handler" />, which
+writes a readable line for each event to standard error, at the level the
+`XCL_LOG_LEVEL` environment variable names
+(<TsRef name="xcl-lang.prettylog.levelFromEnv" label="levelFromEnv" />). With
+<TsRef name="xcl-lang.ConfigOptions.eventData" label="eventData" /> set to
+<TsRef name="xcl-lang.EventDataLevel" label="EventDataLevel.Processed" />, the
+events carry entity data, so each entity's configuration is written beneath
+the line reporting its creation.
+
+To send the events to a logger of your own instead, such as pino, winston or
+`console`, use <TsRef name="xcl-lang.events.toLogger" label="events.toLogger" />:
+
+<TsExample file="guide/logger.ts" region="show" title="main.ts" />
+
+The [events guide](/events/) describes the stream in full.
+
+## Destroy
+
+<TsRef name="xcl-lang.Config.destroy" label="destroy" /> destroys every
+entity in the saved state, children first, so the container goes before the
+network it joined.
+
+<TsExample file="guide/program.ts" region="destroy" title="main.ts" />
+
+## The complete program
+
+The last lines choose a step from the command line.
+
+<TsExample file="guide/program.ts" title="main.ts" />
+
+Compile it, then run each step in turn:
+
+```sh
+npx tsc
+node build/main.js apply
+node build/main.js show
+node build/main.js destroy
+```
+
+</Prose>
+
+<CtaBanner
+  heading="Look up the rest"
+  body="Every name the package exports, with its signature, parameters, return value and errors."
+>
+  <Button href="/reference/typescript/" label="TypeScript reference →" variant="primary" large />
+  <Button href="/registries/" label="Registries guide →" variant="secondary" large />
+</CtaBanner>

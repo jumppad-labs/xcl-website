@@ -8,6 +8,7 @@ import Prose from "../../components/sections/Prose.astro";
 import CtaBanner from "../../components/sections/CtaBanner.astro";
 import Button from "../../components/Button.astro";
 import CodeTabs from "../../components/CodeTabs.astro";
+import TsExample from "../../components/TsExample.astro";
 
 <Hero
   heading="Example: configuration only"
@@ -240,6 +241,11 @@ class Deployment:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/configuration-only/resources.ts" region="types" />
+
+  </div>
 </CodeTabs>
 
 The `service` type shows why this is more than a manifest. Kubernetes matches
@@ -319,6 +325,11 @@ class Ingress:
     rule: list[Rule] = xcl.field(default_factory=list)
     meta: xcl.Meta | None = None
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="examples/configuration-only/resources.ts" region="service" />
 
   </div>
 </CodeTabs>
@@ -593,6 +604,13 @@ def load_config(path: str, **options) -> AppConfig:
 ```
 
   </div>
+  <div slot="typescript">
+
+`Decode` has no TypeScript form, so the TypeScript program fills its own `AppConfig` with one `all` call per block type it reads.
+
+<TsExample file="examples/configuration-only/main.ts" region="load" />
+
+  </div>
 </CodeTabs>
 
 `loadConfig` takes its options from the caller. `run` sends xcl's
@@ -657,6 +675,11 @@ def run(path: str) -> None:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/configuration-only/main.ts" region="run" />
+
+  </div>
 </CodeTabs>
 
 xcl writes nothing unless a receiver is set. The receiver needs nothing from
@@ -705,6 +728,11 @@ if __name__ == "__main__":
         xcl.print_error(err, formatter=xcl.highlight.for_stream(sys.stderr))
         sys.exit(1)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="examples/configuration-only/main.ts" region="main" />
 
   </div>
 </CodeTabs>
@@ -861,6 +889,11 @@ def find_container_port(deployment: Deployment, container_port: int) -> tuple[Co
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/configuration-only/routes.ts" region="routes" />
+
+  </div>
 </CodeTabs>
 
 ## Testing it
@@ -972,6 +1005,11 @@ def test_ingress_routes_reports_every_ingress_path():
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="examples/configuration-only/routes.test.ts" region="every-path" />
+
+  </div>
 </CodeTabs>
 
 Each way a link can fail to resolve, an unknown service, an unknown deployment
@@ -1004,6 +1042,11 @@ def test_ingress_routes_fails_for_unknown_service():
 
     assert 'service "service.missing" not found' in str(raised.value)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="examples/configuration-only/routes.test.ts" region="unknown-service" />
 
   </div>
 </CodeTabs>

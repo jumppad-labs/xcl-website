@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 
 <Hero
   heading="Diffs"
@@ -65,6 +66,13 @@ xcl.print_diff(d)
 `xcl.print_diff` prints to `sys.stdout` unless you pass a stream.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="diff/run.ts" region="show" title="main.ts" />
+
+`printDiff` prints to `process.stdout` unless you pass `out`.
+
+  </div>
 </CodeTabs>
 
 The result is plain data. `d.Summary` counts the entities for each action and
@@ -98,6 +106,13 @@ for resource in d.resources:
 ```
 
 `change.after_value` is `xcl.UNKNOWN` for a value known only after apply, and `change.after` otherwise.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="diff/resources.ts" region="show" />
+
+`change.after` is the symbol `UNKNOWN` for a value known only after apply, and `change.unknown` is then true.
 
   </div>
 </CodeTabs>
@@ -184,6 +199,11 @@ d = cfg.diff("./config", reveal_sensitive=True)
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="diff/reveal.ts" region="show" />
+
+  </div>
 </CodeTabs>
 
 The result then holds the secrets in plain form, and so does anything made
@@ -212,6 +232,13 @@ xcl.print_diff(d)
 ```
 
 `xcl.print_diff` prints to `sys.stdout` unless you pass a stream, such as `xcl.print_diff(d, sys.stderr)`. It takes a diff that `cfg.diff` returned; a `Diff` built by hand has no printed form and raises `ValueError`.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="diff/print.ts" region="show" />
+
+`printDiff` prints to `process.stdout` unless you pass `out`, such as `printDiff(d, { out: process.stderr })`. It takes a diff that `config.diff` returned; a `Diff` built by hand has no printed form and throws `TypeError`.
 
   </div>
 </CodeTabs>
@@ -323,6 +350,13 @@ xcl.print_diff(d, formatter=xcl.highlight.for_stream(sys.stdout))
 `formatter=xcl.highlight.TERMINAL` always colours; `xcl.highlight.for_stream(stream)` colours only a terminal with `NO_COLOR` unset or empty.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="diff/colour.ts" region="show" />
+
+`formatter: terminal` always colours; `forStream(stream)` colours only a terminal with `NO_COLOR` unset or empty.
+
+  </div>
 </CodeTabs>
 
 The markers and paths of added values and created entities are labelled
@@ -368,6 +402,13 @@ xcl.print_diff(d, formatter=xcl.highlight.TERMINAL, theme=theme)
 ```
 
 `DEFAULT_THEME` cannot be changed in place; `|` gives a new theme. The kinds are `Kind.INSERTED`, `Kind.DELETED` and `Kind.CHANGED`, in the category `Kind.DIFF`.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="diff/theme.ts" region="show" />
+
+`defaultTheme` is frozen; a spread gives a new theme. The kinds are `Kind.Inserted`, `Kind.Deleted` and `Kind.Changed`, in the category `Kind.Diff`.
 
   </div>
 </CodeTabs>
@@ -419,6 +460,13 @@ html = summary.getvalue()
 `xcl.highlight.css(theme)` returns the stylesheet `highlight.WriteCSS` writes. The HTML is already escaped, so insert it into a template without escaping it again, such as with `markupsafe.Markup(html)` in Jinja.
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="diff/html.ts" region="show" />
+
+`css(theme)` returns the stylesheet `highlight.WriteCSS` writes. The HTML is already escaped, so insert it into a page without escaping it again.
+
+  </div>
 </CodeTabs>
 
 The output is already escaped, so it goes into an `html/template` page as
@@ -459,6 +507,13 @@ for token in d.tokens:
 ```
 
 `token.kind` is a `xcl.highlight.Kind`, or its number for a kind from a newer engine that the package does not know; `parent_of` and `css_class_of` work for both. A format of your own is any object with a `format(out, theme, tokens)` method, passed as `formatter=`; `xcl.highlight.style_for(theme, kind)` resolves a kind's style through its category.
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="diff/tokens.ts" region="show" />
+
+`token.kind` is a `Kind`, or its number for a kind from a newer engine that the package does not know; `parentOf` and `cssClassOf` work for both. A format of your own is a `Formatter`, a function `(out, theme, tokens)` that writes to `out`, passed as `formatter`; `styleFor(theme, kind)` resolves a kind's style through its category.
 
   </div>
 </CodeTabs>

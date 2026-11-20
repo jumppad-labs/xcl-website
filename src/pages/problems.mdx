@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 
 <Hero
   heading="Problems in configuration"
@@ -82,6 +83,11 @@ except xcl.ConfigError as err:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="problems/problems.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 In Go, `xclerrors.Diagnostic` embeds the `hcl.Diagnostic` it was made from, so
@@ -141,6 +147,11 @@ except xcl.Error as err:
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="problems/print-error.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 `xcl.print_error` writes to `sys.stderr` unless it is given a stream, and
@@ -187,6 +198,11 @@ xcl.PrintError(os.Stderr, err, xcl.WithWidth(40))
 ```python title="main.py"
 xcl.print_error(err, width=40)
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="problems/width.ts" region="show" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -264,6 +280,11 @@ import xcl
 
 xcl.print_error(err, formatter=xcl.highlight.for_stream(sys.stderr))
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="problems/colour.ts" region="show" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -377,6 +398,29 @@ Error: Unsupported argument
      5 |   retries     = 2
 
 An argument named "modls" is not expected here.
+```
+
+  </div>
+  <div slot="typescript">
+
+`console.error` shows an xcl error's stack, which carries the report
+after the message:
+
+<TsExample file="problems/logs.ts" region="show" title="main.ts" />
+
+```text
+validating configuration: ConfigError: config/main.xcl:3,3-8: Unsupported argument; An argument named "modls" is not expected here. (agent.claude, modls)
+Error: Unsupported argument
+
+  on config/main.xcl line 3, in agent.claude, field modls:
+     1 | agent "claude" {
+     2 |   description = "writes the code"
+     3 |   modls       = ["opus"]
+     4 |   timeout     = 300
+     5 |   retries     = 2
+
+An argument named "modls" is not expected here.
+    at ...
 ```
 
   </div>

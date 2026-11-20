@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 
 <Hero
   heading="Plugin logging and loading"
@@ -24,8 +25,8 @@ logged in. How that stream works is covered in
 applications that register their plugins.
 
 Plugins are written in Go for now. A plugin that logs this way works from
-both Go and Python applications, and its log messages reach a Python
-`on_event` handler as the same events.
+Go, Python and TypeScript applications, and its log messages reach a Python
+`on_event` handler or a TypeScript `onEvent` handler as the same events.
 
 ## Logging from a provider
 
@@ -212,6 +213,11 @@ cfg = xcl.Config(registries=[local])
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="plugin-logging/registries.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 None of them starts, checks or searches anything, and none returns an error.
@@ -270,6 +276,11 @@ try:
 except xcl.PluginLoadError as err:
     raise SystemExit(f"{err}, build it with `make build` in example/plugin")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="plugin-logging/load-error.ts" region="show" />
 
   </div>
 </CodeTabs>

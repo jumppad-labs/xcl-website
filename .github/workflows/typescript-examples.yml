@@ -1,0 +1,44 @@
+# Compiles every TypeScript example on the site against the xcl-lang release
+# pinned in xcl-typescript-ref.txt, then builds the site with a reference link
+# to an unknown name (TsRef, PyRef) as a failure.
+#
+# It runs on pull requests and on every push to main, the release bot's pin
+# bumps included, and is deliberately separate from deploy.yml and from the
+# bump's build gate: a release that breaks an example still updates the
+# reference, and this workflow's failed run on that push is the report, naming
+# the file and line.
+
+name: TypeScript examples
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Compile the examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Compile the examples against the pinned xcl-lang
+        run: npm run check:typescript
+
+      - name: Build with unknown reference names as failures
+        env:
+          ASTRO_TELEMETRY_DISABLED: '1'
+          XCL_REFERENCE_STRICT: '1'
+        run: npm run build

@@ -5,13 +5,14 @@
   "description": "xcl.dev documentation site",
   "type": "module",
   "scripts": {
-    "reference": "node scripts/fetch-python-reference.mjs",
+    "reference": "node scripts/fetch-reference.mjs",
     "predev": "npm run reference",
     "dev": "astro dev",
     "prebuild": "npm run reference",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "check:typescript": "node scripts/check-typescript-examples.mjs"
   },
   "dependencies": {
     "@astro-community/astro-embed-youtube": "^0.5.10",

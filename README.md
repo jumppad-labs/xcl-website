@@ -28,23 +28,55 @@ Outputs the static site to `dist/`. The deploy workflow at
 `.github/workflows/deploy.yml` runs the same command in CI and publishes
 `dist/` to GitHub Pages on every push to `main`.
 
-## The Python reference
+## The language references
 
-`/reference/python/` is built from data the xcl-python release publishes.
-`xcl-python-ref.txt` pins the release, and `npm run reference`, which runs
-before every build and dev server, downloads that release's
+`/reference/python/` and `/reference/typescript/` are built from data each
+package's release publishes. `xcl-python-ref.txt` and `xcl-typescript-ref.txt`
+pin the releases, and `npm run reference` (`scripts/fetch-reference.mjs`),
+which runs before every build and dev server, downloads each release's
 `xcl-lang-<version>-reference.json` into `src/generated/`, which git ignores.
-A build fails if the data is missing or describes a different version from the
-pin. A new xcl-python release moves the pin through
+A build fails if either file is missing or describes a different version from
+its pin. A new release of either package moves its pin through
 `.github/workflows/reference-bump.yml`.
 
-To work without the download, generate the data from an xcl-python checkout
-and point the build at it:
+To work without a download, generate the data from a package checkout and
+point the build at it:
 
 ```
-python .github/scripts/api_reference.py --out /tmp/reference.json   # in xcl-python
-XCL_PYTHON_REFERENCE=/tmp/reference.json npm run build              # here
+python .github/scripts/api_reference.py --out /tmp/python.json        # in xcl-python
+node .github/scripts/api-reference.mjs --out /tmp/typescript.json     # in xcl-typescript
+XCL_PYTHON_REFERENCE=/tmp/python.json XCL_TYPESCRIPT_REFERENCE=/tmp/typescript.json npm run build   # here
 ```
+
+Either variable can be set alone; the other language is still downloaded.
+
+## TypeScript examples
+
+Every TypeScript example on the site is real source in `typescript-examples/`,
+a strict TypeScript project of its own, so the compiler checks it against the
+released package. A page shows one with the `TsExample` component:
+
+```mdx
+<TsExample file="events/handler.ts" />
+<TsExample file="guide/program.ts" region="apply" title="main.ts" />
+```
+
+`file` is the path below `typescript-examples/`, and `region` shows only the
+lines between `// #region <name>` and `// #endregion`, so the imports and setup
+a fragment needs to compile can sit outside the part a page shows. A missing
+file or region fails the build.
+
+`npm run check:typescript` installs the `xcl-lang` version pinned in
+`xcl-typescript-ref.txt`, without its engine packages, and compiles the
+project; a type error fails it, naming the file and line. To compile against
+an unreleased package, point it at a tarball from `npm pack` in an
+xcl-typescript checkout:
+
+```
+XCL_TYPESCRIPT_PACKAGE=/path/to/xcl-lang-0.0.0-dev.tgz npm run check:typescript
+```
+
+The site's own `astro check` does not read `typescript-examples/`.
 
 ## Pages
 
@@ -53,6 +85,8 @@ XCL_PYTHON_REFERENCE=/tmp/reference.json npm run build              # here
 | `/` | `src/pages/index.mdx`: what xcl is and the features it adds to HCL |
 | `/using-xcl-with-python/` | `src/pages/using-xcl-with-python.mdx`: a Python program from `pip install` to a working apply, synchronous then asyncio |
 | `/reference/python/` | `src/pages/reference/python.astro`: the Python package's API, rendered from the pinned release's reference data |
+| `/using-xcl-with-typescript/` | `src/pages/using-xcl-with-typescript.mdx`: a TypeScript program from `npm install` to a working apply, its code compiled from `typescript-examples/guide/` |
+| `/reference/typescript/` | `src/pages/reference/typescript.astro`: the TypeScript package's API, rendered from the pinned release's reference data |
 | `/events/` | `src/pages/events.mdx`: the event stream, delivery guarantees and connecting it to `log/slog` |
 | `/plugin-logging/` | `src/pages/plugin-logging.mdx`: logging from a provider, and when registered plugins load |
 | `/registries/` | `src/pages/registries.mdx`: the local registry, declaring types with `RegisterType`, configuration without state, custom registries, load order, and how load problems and clashes are reported |

@@ -8,6 +8,7 @@ import Prose from "../components/sections/Prose.astro";
 import CtaBanner from "../components/sections/CtaBanner.astro";
 import Button from "../components/Button.astro";
 import CodeTabs from "../components/CodeTabs.astro";
+import TsExample from "../components/TsExample.astro";
 import { pythonRepoURL } from "../config/site";
 
 <Hero
@@ -54,6 +55,15 @@ import xcl
 
 cfg = xcl.Config(on_event=xcl.logging_handler(logging.getLogger("xcl")))
 ```
+
+  </div>
+  <div slot="typescript">
+
+Node has no slog, so `events.toLogger` writes to any logger with
+`debug`, `info`, `warn` and `error` methods instead, such as pino, winston
+or the console:
+
+<TsExample file="events/logger.ts" region="show" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -156,6 +166,11 @@ cfg = xcl.Config(on_event=on_event)
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="events/print-problems.ts" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 ## The event
@@ -218,6 +233,11 @@ cfg = xcl.Config(on_event=handler)
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="events/handler.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 The Python `xcl.Event` carries the same fields as `time`, `source`,
@@ -267,6 +287,11 @@ cfg = xcl.Config(
     event_mask=event_mask,
 )
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="events/event-mask.ts" region="show" title="main.ts" />
 
   </div>
 </CodeTabs>
@@ -398,6 +423,11 @@ cfg = xcl.Config(
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="events/buffer-size.ts" region="show" title="main.ts" />
+
+  </div>
 </CodeTabs>
 
 ## Errors and panics in the receiver
@@ -466,6 +496,20 @@ cfg = xcl.Config(
 ```
 
   </div>
+  <div slot="typescript">
+
+<TsExample file="events/prettylog.ts" />
+
+```text
+3:04PM INFO create success source=core operation=create phase=success resource=resource.recording.one type=recording.one file=/work/main.xcl duration=509µs
+  resource "recording" "one" {
+    log    = "/work/log.jsonl"
+    value  = "a"
+    output = "one-a" # set by the provider
+  }
+```
+
+  </div>
 </CodeTabs>
 
 `xcl.aio.Config` takes the same handler, and
@@ -518,6 +562,11 @@ when it is unset:
 ```python
 cfg = xcl.Config(on_event=xcl.prettylog.handler(sys.stderr, xcl.prettylog.level_from_env()))
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="events/prettylog-env.ts" region="show" />
 
   </div>
 </CodeTabs>
