@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/Shell.astro
 title: "XCL"
-description: "XCL is a relational configuration language built on the readability of HCL: references between blocks, graph-based processing, plugins, variables, modules, functions and state. Available for Go and Python."
+description: "XCL is a relational configuration language built on the readability of HCL: references between blocks, graph-based processing, plugins, variables, modules, functions and state. Available for Go, Python and TypeScript."
 ---
 import Hero from "../components/sections/Hero.astro";
 import Section from "../components/sections/Section.astro";
@@ -18,9 +18,9 @@ import { pypiURL } from "../config/site";
 <Hero
   variant="centered"
   heading="XCL: a modern relational configuration language"
-  sub="A configuration language built on the readability of HCL. Blocks relate to each other through references, are processed in dependency order and run through plugins, so configuration can be planned, applied, changed and destroyed. Available for Go and Python."
+  sub="A configuration language built on the readability of HCL. Blocks relate to each other through references, are processed in dependency order and run through plugins, so configuration can be planned, applied, changed and destroyed. Available for Go, Python and TypeScript."
 >
-  <Badge slot="badge" text="v0.10.0 · Go and Python" variant="green" dot />
+  <Badge slot="badge" text="v0.10.0 · Go, Python and TypeScript" variant="green" dot />
   <InstallBlock slot="install" command="go get github.com/jumppad-labs/xcl" />
   <Button href="/examples/configuration-only/" label="See an example →" variant="primary" large />
   <Button href="https://github.com/jumppad-labs/xcl" label="View on GitHub" variant="secondary" large external />
@@ -71,6 +71,10 @@ npm install xcl-lang
 New to XCL from Python? [Using XCL with Python](/using-xcl-with-python/) takes
 you from an empty program to a working one, and the
 [Python reference](/reference/python/) lists every name the package exports.
+New to XCL from TypeScript? [Using XCL with TypeScript](/using-xcl-with-typescript/)
+does the same for a Node program, and the
+[TypeScript reference](/reference/typescript/) lists every name `xcl-lang`
+exports.
 
 </Section>
 
@@ -90,8 +94,8 @@ you from an empty program to a working one, and the
   syntax matches HCL's, so editors and formatters carry over, but it will grow
   where configuration needs it to.
 
-  You describe a block type once, as a Go struct with `xcl` tags or as a
-  Python dataclass:
+  You describe a block type once, as a Go struct with `xcl` tags, a Python
+  dataclass or a TypeScript class with decorators:
 
 <CodeTabs>
   <div slot="go">
@@ -249,7 +253,7 @@ print(db.location, db.port)
 </CodeTabs>
 
   The [language reference](/language/) describes every part of XCL, with the
-  Go and Python types beside each shape of configuration.
+  Go, Python and TypeScript types beside each shape of configuration.
 
   <Button href="/language/" label="Learn the language →" variant="secondary" />
 
@@ -387,7 +391,7 @@ print(db.location, db.port)
 
   - [Language reference](/language/): files, entities, attributes and blocks,
     references, expressions, variables and outputs, modules and functions,
-    each shape of configuration beside its Go and Python types.
+    each shape of configuration beside its Go, Python and TypeScript types.
 
 </Section>
 

@@ -12,3 +12,6 @@ export const goReferenceURL = "https://pkg.go.dev/github.com/jumppad-labs/xcl";
 export const pythonRepoURL = "https://github.com/jumppad-labs/xcl-python";
 export const pythonParityURL = `${pythonRepoURL}/blob/main/PARITY.md`;
 export const pypiURL = "https://pypi.org/project/xcl-lang/";
+
+// The TypeScript package: the npm package xcl-lang.
+export const npmURL = "https://www.npmjs.com/package/xcl-lang";

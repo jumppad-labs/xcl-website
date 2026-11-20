@@ -21,11 +21,13 @@ import { pythonParityURL } from "../config/site";
 Showing someone what a configuration holds is easiest in the syntax they
 wrote it in. `xcl.EncodeEntity` turns one entity back into configuration text,
 and the Config's `EncodeSavedEntity` does the same from its saved data. In
-Python the two are `cfg.encode_entity` and `cfg.encode_saved_entity`, and the
-engine renders the text, so Python and Go write identical text for the same
-entity. Both write exactly one block, so convert several entities by calling
-once for each. The text is plain, and `xcl.PrintEntity` in Go and
-`cfg.print_entity` in Python print an entity coloured for a terminal, as HTML
+Python the two are `cfg.encode_entity` and `cfg.encode_saved_entity`, and in
+TypeScript `config.encodeEntity` and `config.encodeSavedEntity`. The engine
+renders the text, so Go, Python and TypeScript write identical text for the
+same entity. Both write exactly one block, so convert several entities by
+calling once for each. The text is plain, and `xcl.PrintEntity` in Go,
+`cfg.print_entity` in Python and `config.printEntity` in TypeScript print an
+entity coloured for a terminal, as HTML
 or as SVG in one call.
 
 ## Converting an entity

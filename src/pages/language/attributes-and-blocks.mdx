@@ -418,6 +418,8 @@ object value, written with `=` and braces, rather than a nested block. The
 object's fields are declared like any other: a field tagged `optional` may be
 left out of the object. In Python a dataclass-typed field is a block by
 default, and `xcl.field(block=False)` makes it an object attribute instead.
+In TypeScript `@Block(() => Endpoint)` declares a nested block, and
+`@Attribute(() => Endpoint)` an object attribute.
 
 <CodeTabs>
   <div slot="go">
@@ -452,6 +454,11 @@ class App:
     default_endpoint: Endpoint | None = xcl.field(block=False, default=None)
     name: str = xcl.field(label=True, default="")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/object-values.ts" title="resources.ts" region="show" />
 
   </div>
 </CodeTabs>
@@ -629,6 +636,11 @@ class App:
     token: xcl.Sensitive[str] | None = None
     name: str = xcl.field(label=True, default="")
 ```
+
+  </div>
+  <div slot="typescript">
+
+<TsExample file="language/attributes-and-blocks/put-together.ts" title="resources.ts" region="show" />
 
   </div>
 </CodeTabs>

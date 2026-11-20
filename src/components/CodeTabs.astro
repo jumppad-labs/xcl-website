@@ -1,6 +1,6 @@
 ---
 /**
- * CodeTabs shows one example as a Go tab and a Python tab.
+ * CodeTabs shows one example as a Go tab, a Python tab and a TypeScript tab.
  *
  * Each tab's panel is an ordinary fenced code block passed through a named
  * slot, so Expressive Code still highlights it, frames it and shows its
@@ -22,7 +22,17 @@
  *     ```
  *
  *     </div>
+ *     <div slot="typescript">
+ *
+ *     <TsExample file="page/example.ts" title="main.ts" region="show" />
+ *
+ *     </div>
  *   </CodeTabs>
+ *
+ * Every box needs all three panels, and a box with no typescript panel fails
+ * the build naming its page. A TypeScript panel shows code from the checked
+ * example project through TsExample, or says in prose that the behaviour has
+ * no TypeScript equivalent.
  *
  * MDX needs the blank lines after `<div slot="...">` and before `</div>` for
  * the fence to parse as a code block.
@@ -32,11 +42,18 @@
  * in Head.astro and updated by the tab handler in Shell.astro, so every box
  * on a page follows the one choice and the choice carries to the next page.
  */
+if (!Astro.slots.has("typescript")) {
+  throw new Error(
+    `CodeTabs on ${Astro.url.pathname} has no typescript panel: give the box a <div slot="typescript">.`,
+  );
+}
+
 const id = crypto.randomUUID().slice(0, 8);
 
 const languages = [
   { key: "go", label: "Go" },
   { key: "python", label: "Python" },
+  { key: "typescript", label: "TypeScript" },
 ] as const;
 ---
 <div class="code-tabs">
@@ -71,6 +88,14 @@ const languages = [
   >
     <slot name="python" />
   </div>
+  <div
+    role="tabpanel"
+    id={`code-tabs-${id}-panel-typescript`}
+    aria-labelledby={`code-tabs-${id}-tab-typescript`}
+    data-lang-panel="typescript"
+  >
+    <slot name="typescript" />
+  </div>
 </div>
 
 <style is:global>
@@ -78,7 +103,11 @@ const languages = [
   html:not([data-lang="python"]) [data-lang-panel="python"] {
     display: none;
   }
-  html[data-lang="python"] [data-lang-panel="go"] {
+  html:not([data-lang="typescript"]) [data-lang-panel="typescript"] {
+    display: none;
+  }
+  html[data-lang="python"] [data-lang-panel="go"],
+  html[data-lang="typescript"] [data-lang-panel="go"] {
     display: none;
   }
 
@@ -132,8 +161,9 @@ const languages = [
   /* The selected look follows the page-wide attribute too, so the right tab
      is lit before the handler runs and there is no flash of Go on a Python
      page. aria-selected is kept in step by the handler for assistive tech. */
-  html:not([data-lang="python"]) .code-tabs-list [data-lang-choice="go"],
-  html[data-lang="python"] .code-tabs-list [data-lang-choice="python"] {
+  html:not([data-lang="python"]):not([data-lang="typescript"]) .code-tabs-list [data-lang-choice="go"],
+  html[data-lang="python"] .code-tabs-list [data-lang-choice="python"],
+  html[data-lang="typescript"] .code-tabs-list [data-lang-choice="typescript"] {
     color: var(--color-text-primary);
     background: #1c2128;
     border-color: #30363d;

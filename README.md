@@ -85,6 +85,8 @@ The site's own `astro check` does not read `typescript-examples/`.
 | `/` | `src/pages/index.mdx`: what xcl is and the features it adds to HCL |
 | `/using-xcl-with-python/` | `src/pages/using-xcl-with-python.mdx`: a Python program from `pip install` to a working apply, synchronous then asyncio |
 | `/reference/python/` | `src/pages/reference/python.astro`: the Python package's API, rendered from the pinned release's reference data |
+| `/using-xcl-with-typescript/` | `src/pages/using-xcl-with-typescript.mdx`: a TypeScript program from `npm install` to a working apply, its code compiled from `typescript-examples/guide/` |
+| `/reference/typescript/` | `src/pages/reference/typescript.astro`: the TypeScript package's API, rendered from the pinned release's reference data |
 | `/events/` | `src/pages/events.mdx`: the event stream, delivery guarantees and connecting it to `log/slog` |
 | `/plugin-logging/` | `src/pages/plugin-logging.mdx`: logging from a provider, and when registered plugins load |
 | `/registries/` | `src/pages/registries.mdx`: the local registry, declaring types with `RegisterType`, configuration without state, custom registries, load order, and how load problems and clashes are reported |

@@ -294,8 +294,8 @@ print(app.meta.depends_on, app.meta.disabled)
 
 The language itself declares three types: `variable`, `output` and
 `module`. Every other type comes from the application that reads the
-configuration, either a plain Go or Python type it registers, or a type a
-plugin provides together with the provider that runs it. Both are given to a
+configuration, either a plain Go, Python or TypeScript type it registers, or
+a type a plugin provides together with the provider that runs it. Both are given to a
 `Config` through [registries](/registries/), and a configuration can only use
 types the `Config` was given.
 
